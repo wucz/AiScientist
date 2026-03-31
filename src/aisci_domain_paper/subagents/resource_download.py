@@ -14,4 +14,4 @@ class ResourceDownloadSubagent(PaperSubagent):
         return RESOURCE_DOWNLOAD_SYSTEM_PROMPT
 
     def get_tools(self):
-        return build_resource_download_tools()
+        return build_resource_download_tools(self.capabilities)

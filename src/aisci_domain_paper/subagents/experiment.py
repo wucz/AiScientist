@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from aisci_domain_paper.prompts.templates import EXPERIMENT_SYSTEM_PROMPT
 from aisci_domain_paper.subagents.base import PaperSubagent
 from aisci_domain_paper.tools import build_experiment_tools
 
@@ -11,7 +10,7 @@ class PaperExperimentSubagent(PaperSubagent):
         return "experiment"
 
     def system_prompt(self) -> str:
-        return EXPERIMENT_SYSTEM_PROMPT
+        return self.engine.render_subagent_prompt("experiment")
 
     def get_tools(self):
-        return build_experiment_tools()
+        return build_experiment_tools(self.capabilities)

@@ -28,6 +28,7 @@ import structlog
 from openai import BadRequestError
 from aisci_agent_runtime.llm_client import LLMClient, ContextLengthError, ContentPolicyError
 from aisci_agent_runtime.shell_interface import ShellInterface
+from aisci_agent_runtime.summary_utils import SummaryConfig, summarize_messages
 from aisci_agent_runtime.tools.base import Tool, SubagentCompleteSignal, SubagentCompleteTool
 
 try:
@@ -58,6 +59,7 @@ class SubagentConfig:
     reminder_freq: int = 10
     log_dir: str = "/home/agent/subagent_logs"
     output_dir: str = "/home/agent"
+    summary_config: SummaryConfig | None = None
 
 
 @dataclass
@@ -442,6 +444,7 @@ class Subagent(ABC):
         start = time.time()
         total_tokens: dict[str, int] = {"input": 0, "output": 0}
         empty_streak = 0
+        last_summary: str | None = None
 
         for step in range(1, self.config.max_steps + 1):
             elapsed = time.time() - start
@@ -487,28 +490,23 @@ class Subagent(ABC):
                     log_path,
                 )
             except ContextLengthError as _ctx_err:
-                if _ctx_err.prune_individual:
-                    # A single message is too large — truncate per-message content
-                    # first (tiktoken head+tail), then also drop old turns.
-                    # Mirrors PaperBench's prune_individual=True path.
-                    # Pass context_window (already tokenizer-corrected for GLM) as
-                    # the per-message limit so GLM's 1.26× token inflation doesn't
-                    # overflow the model's hard limit after truncation.
+                if self.config.summary_config and self.config.summary_config.enabled:
                     logger.warning(
-                        "context length exceeded — truncating individual messages",
-                        name=self.name, step=step,
-                        context_window=self.llm.config.context_window,
+                        "context length exceeded — attempting summary reduction",
+                        name=self.name,
+                        step=step,
                     )
-                    messages = prune_messages_individual(
-                        messages,
-                        max_tokens_per_message=self.llm.config.context_window,
+                    messages, last_summary, summarized = summarize_messages(
+                        llm=self.llm,
+                        messages=messages,
+                        config=self.config.summary_config,
+                        task_description=context,
+                        last_summary=last_summary,
                     )
-                    messages = prune_messages(messages)
+                    if not summarized:
+                        messages = self._prune_after_context_error(messages, _ctx_err)
                 else:
-                    logger.warning(
-                        "context length exceeded — pruning", name=self.name, step=step,
-                    )
-                    messages = prune_messages(messages)
+                    messages = self._prune_after_context_error(messages, _ctx_err)
                 try:
                     resp = self.llm.chat(messages, tools=tool_schemas)
                 except ContextLengthError:
@@ -613,7 +611,15 @@ class Subagent(ABC):
                     continue
 
                 try:
-                    result = tool.execute(self.shell, **tc.arguments)
+                    constraints = getattr(self, "constraints", None)
+                    if constraints and tool.supports_constraints():
+                        result = tool.execute_with_constraints(
+                            self.shell,
+                            constraints=constraints,
+                            **tc.arguments,
+                        )
+                    else:
+                        result = tool.execute(self.shell, **tc.arguments)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.call_id,
@@ -689,6 +695,21 @@ class Subagent(ABC):
             token_usage=tokens,
             log_path=log_path,
         )
+
+    def _prune_after_context_error(self, messages: list[dict], err: ContextLengthError) -> list[dict]:
+        if err.prune_individual:
+            logger.warning(
+                "context length exceeded — truncating individual messages",
+                name=self.name,
+                context_window=self.llm.config.context_window,
+            )
+            messages = prune_messages_individual(
+                messages,
+                max_tokens_per_message=self.llm.config.context_window,
+            )
+            return prune_messages(messages)
+        logger.warning("context length exceeded — pruning", name=self.name)
+        return prune_messages(messages)
 
     @staticmethod
     def _log_event(path: str, event: dict) -> None:

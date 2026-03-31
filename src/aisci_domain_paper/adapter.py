@@ -11,7 +11,6 @@ from aisci_agent_runtime.llm_profiles import llm_env
 from aisci_core.logging_utils import append_log
 from aisci_core.models import ArtifactRecord, JobRecord, PaperSpec, RunPhase, ValidationReport, WorkspaceLayout
 from aisci_core.paths import ensure_job_dirs, resolve_job_paths
-from aisci_domain_paper.orchestrator import PaperOrchestrator
 from aisci_runtime_docker.profiles import default_paper_profile
 from aisci_runtime_docker.runtime import DockerRuntimeError, DockerRuntimeManager
 
@@ -19,7 +18,6 @@ from aisci_runtime_docker.runtime import DockerRuntimeError, DockerRuntimeManage
 class PaperDomainAdapter:
     def __init__(self, runtime: DockerRuntimeManager):
         self.runtime = runtime
-        self.orchestrator = PaperOrchestrator()
 
     def run(self, job: JobRecord) -> dict[str, object]:
         assert isinstance(job.mode_spec, PaperSpec)
@@ -32,22 +30,26 @@ class PaperDomainAdapter:
         if not (submission_dir / ".git").exists():
             subprocess.run(["git", "init"], cwd=submission_dir, check=False, capture_output=True)
 
-        if self.runtime.can_use_docker() and os.environ.get("AISCI_FORCE_BOOTSTRAP_LOOP") != "1":
-            try:
-                self._run_real_loop(job, job_paths)
-            except DockerRuntimeError as exc:
-                append_log(job_paths.logs_dir / "job.log", f"falling back to local paper loop: {exc}")
-                artifacts = self.orchestrator.run(job, job_paths)
-                validation = self._maybe_validate(job, job_paths)
-                return {"artifacts": artifacts, "validation_report": validation}
-        else:
-            artifacts = self.orchestrator.run(job, job_paths)
-            validation = self._maybe_validate(job, job_paths)
-            return {"artifacts": artifacts, "validation_report": validation}
+        self._ensure_runtime_ready(job, job_paths)
+        self._run_real_loop(job, job_paths)
 
         artifacts = self._collect_artifacts(job_paths)
         validation = self._maybe_validate(job, job_paths)
         return {"artifacts": artifacts, "validation_report": validation}
+
+    def _ensure_runtime_ready(self, job: JobRecord, job_paths) -> None:
+        if not self.runtime.can_use_docker():
+            message = "Paper mode requires a reachable Docker daemon. No local fallback loop is available."
+            append_log(job_paths.logs_dir / "job.log", message)
+            raise DockerRuntimeError(message)
+        env = llm_env(job.llm_profile)
+        if not any(env.get(key) for key in ("OPENAI_API_KEY", "AZURE_OPENAI_API_KEY")):
+            message = (
+                "Paper mode requires OPENAI_API_KEY or AZURE_OPENAI_API_KEY in the host environment. "
+                "No local fallback loop is available."
+            )
+            append_log(job_paths.logs_dir / "job.log", message)
+            raise RuntimeError(message)
 
     def _stage_inputs(self, spec: PaperSpec, job_paths) -> None:
         paper_dir = job_paths.workspace_dir / "paper"
@@ -137,6 +139,8 @@ class PaperDomainAdapter:
                 "LOGS_DIR": "/home/logs",
             }
         )
+        if os.environ.get("GITHUB_TOKEN"):
+            env["GITHUB_TOKEN"] = os.environ["GITHUB_TOKEN"]
         if job.mode_spec.enable_online_research and env.get("AISCI_API_MODE") == "responses":
             env["AISCI_WEB_SEARCH"] = "true"
         return env

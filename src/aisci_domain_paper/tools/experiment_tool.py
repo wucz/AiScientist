@@ -1,32 +1,155 @@
 from __future__ import annotations
 
-from aisci_domain_paper.tools.basic_tool import build_experiment_tools, callback_tool
+from dataclasses import replace
+from typing import Any
+
+from aisci_agent_runtime.subagents.base import SubagentOutput, SubagentStatus
+from aisci_agent_runtime.tools.base import Tool
+from aisci_domain_paper.configs import DEFAULT_EXPERIMENT_CONFIG, EXPERIMENT_VALIDATE_TIME_LIMIT
+from aisci_domain_paper.tools.basic_tool import build_experiment_tools
+
+
+class ExperimentTool(Tool):
+    def __init__(self, engine) -> None:
+        self.engine = engine
+
+    def name(self) -> str:
+        return "run_experiment"
+
+    def execute(
+        self,
+        shell,  # noqa: ARG002
+        task: str,
+        mode: str = "full",
+        context: str = "",
+        time_budget: int | None = None,
+        max_steps: int | None = None,
+        session_kind: str = "experiment",
+        **kwargs: Any,  # noqa: ARG002
+    ) -> str:
+        if mode not in {"full", "validate"}:
+            return f"Error: invalid mode '{mode}'. Use 'full' or 'validate'."
+
+        session = self.engine.state_manager.create_session(session_kind)
+        self.engine.state_manager.append_separator(session)
+        default_budget = DEFAULT_EXPERIMENT_CONFIG.time_limit if mode == "full" else EXPERIMENT_VALIDATE_TIME_LIMIT
+        cfg = replace(
+            self.engine.subagent_config("experiment", DEFAULT_EXPERIMENT_CONFIG),
+            max_steps=max_steps or DEFAULT_EXPERIMENT_CONFIG.max_steps,
+            time_limit=time_budget or default_budget,
+            log_dir=str(session.directory),
+        )
+        result = self.engine.run_subagent_output(
+            self.engine.subagent_class("experiment"),
+            objective=self._task_description(task=task, mode=mode, context=context),
+            context="",
+            config=cfg,
+            session=session,
+            phase="validate",
+            label="experiment",
+        )
+        self.engine.mark_experiment_run(session_kind)
+        return self._format_result(result, task=task, mode=mode)
+
+    def _task_description(self, *, task: str, mode: str, context: str) -> str:
+        parts = [
+            "## Experiment Task",
+            "",
+            "### Your Task",
+            task,
+            "",
+            f"### Mode: {mode.upper()}",
+        ]
+        if mode == "full":
+            parts.append("- Run the full training / evaluation workflow needed for this check.")
+        else:
+            parts.append("- Run a shorter validation-oriented check, typically reproduce.sh or a smoke test.")
+        injected = self.engine.state_manager.recent_impl_history()
+        if context.strip():
+            parts.extend(["", "### Context from Main Agent", context.strip()])
+        if injected:
+            parts.extend(
+                [
+                    "",
+                    "### Recent Implementation History (auto-injected, latest session)",
+                    "> Cross-check these notes with git history and the current source tree before diagnosing results.",
+                    "",
+                    injected,
+                ]
+            )
+        else:
+            parts.extend(
+                [
+                    "",
+                    "### Implementation History",
+                    "> No implementation log is available yet. Inspect git history and the repository directly before running validation.",
+                ]
+            )
+        return "\n".join(parts).strip()
+
+    def _format_result(self, result: SubagentOutput, *, task: str, mode: str) -> str:
+        status_map = {
+            SubagentStatus.COMPLETED: "completed",
+            SubagentStatus.FAILED: "failed",
+            SubagentStatus.TIMEOUT: "timeout",
+        }
+        task_short = task[:50] + "..." if len(task) > 50 else task
+        header = f"[Experiment | {status_map.get(result.status, result.status.value)} | {mode}]"
+        if task_short:
+            header += f" {task_short}"
+        header += f" ({result.num_steps} steps, {result.runtime_seconds:.1f}s)"
+
+        lines = [header, "", "## Results", result.content.strip() or "(no output)", ""]
+        if result.log_path:
+            lines.extend([f"Log: {result.log_path}", ""])
+
+        if result.status == SubagentStatus.COMPLETED:
+            lines.extend(
+                [
+                    "## Next Step",
+                    "Use the report above to decide whether to move on or run `implement(mode=\"fix\", context=\"<diagnosis>\")`.",
+                ]
+            )
+        elif result.status == SubagentStatus.FAILED:
+            lines.extend(
+                [
+                    "## Failure",
+                    result.error_message or "The experiment subagent failed.",
+                ]
+            )
+        elif result.status == SubagentStatus.TIMEOUT:
+            lines.extend(
+                [
+                    "## Timeout",
+                    "The experiment timed out. Inspect partial logs and decide whether to retry with a narrower validation task.",
+                ]
+            )
+        return "\n".join(lines).strip()
+
+    def get_tool_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": "run_experiment",
+                "description": "Delegate experiment execution and validation to the experiment subagent.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string", "description": "What to validate or run."},
+                        "mode": {"type": "string", "enum": ["full", "validate"], "description": "Experiment mode."},
+                        "context": {"type": "string", "description": "Diagnostics or expectations from previous work."},
+                        "time_budget": {"type": "integer", "description": "Time budget in seconds."},
+                        "max_steps": {"type": "integer", "description": "Optional step cap override."},
+                    },
+                    "required": ["task"],
+                    "additionalProperties": False,
+                },
+            },
+        }
 
 
 def build_run_experiment_tool(engine):
-    return callback_tool(
-        "run_experiment",
-        "Delegate experiment execution and validation to the experiment subagent.",
-        {
-            "type": "object",
-            "properties": {
-                "task": {"type": "string", "description": "What to validate or run."},
-                "mode": {"type": "string", "enum": ["full", "validate"], "description": "Experiment mode."},
-                "context": {"type": "string", "description": "Diagnostics or expectations from previous work."},
-                "time_budget": {"type": "integer", "description": "Time budget in seconds."},
-                "max_steps": {"type": "integer", "description": "Optional step cap override."},
-            },
-            "required": ["task"],
-            "additionalProperties": False,
-        },
-        lambda shell, task, mode="full", context="", time_budget=None, max_steps=None: engine.run_experiment(
-            task=task,
-            mode=mode,
-            context=context,
-            max_steps=max_steps,
-            time_budget=time_budget,
-        ),
-    )
+    return ExperimentTool(engine)
 
 
-__all__ = ["build_run_experiment_tool", "build_experiment_tools"]
+__all__ = ["ExperimentTool", "build_run_experiment_tool", "build_experiment_tools"]

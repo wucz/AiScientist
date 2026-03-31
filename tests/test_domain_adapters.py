@@ -19,7 +19,7 @@ from aisci_core.paths import ensure_job_dirs, resolve_job_paths
 from aisci_domain_mle.adapter import MLEDomainAdapter
 from aisci_domain_paper.adapter import PaperDomainAdapter
 from aisci_runtime_docker.profiles import default_mle_profile
-from aisci_runtime_docker.runtime import DockerRuntimeManager
+from aisci_runtime_docker.runtime import DockerRuntimeError, DockerRuntimeManager
 
 
 def _make_pdf(path: Path) -> None:
@@ -69,11 +69,32 @@ def _mle_job(tmp_path: Path, bundle_path: Path) -> JobRecord:
 
 def test_paper_adapter_stages_artifacts(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("AISCI_REPO_ROOT", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     (tmp_path / "docker").mkdir(parents=True, exist_ok=True)
     (tmp_path / "docker" / "paper.Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
     pdf_path = tmp_path / "sample.pdf"
     _make_pdf(pdf_path)
-    adapter = PaperDomainAdapter(DockerRuntimeManager())
+    runtime = DockerRuntimeManager()
+    monkeypatch.setattr(runtime, "can_use_docker", lambda: True)
+
+    def fake_run_real_loop(job, job_paths) -> None:  # noqa: ANN001
+        analysis_dir = job_paths.workspace_dir / "agent" / "paper_analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        for name in ("summary.md", "structure.md", "algorithm.md", "experiments.md", "baseline.md"):
+            (analysis_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        (job_paths.workspace_dir / "agent" / "prioritized_tasks.md").write_text("# priorities\n", encoding="utf-8")
+        (job_paths.workspace_dir / "agent" / "plan.md").write_text("# plan\n", encoding="utf-8")
+        (job_paths.workspace_dir / "agent" / "capabilities.json").write_text("{}", encoding="utf-8")
+        (job_paths.workspace_dir / "agent" / "final_self_check.md").write_text("# self-check\n", encoding="utf-8")
+        (job_paths.workspace_dir / "agent" / "final_self_check.json").write_text("{}", encoding="utf-8")
+        (job_paths.workspace_dir / "agent" / "paper_main_prompt.md").write_text("# prompt\n", encoding="utf-8")
+        (job_paths.workspace_dir / "submission" / "reproduce.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+        (job_paths.logs_dir / "agent.log").write_text("agent log\n", encoding="utf-8")
+        (job_paths.logs_dir / "conversation.jsonl").write_text("{}\n", encoding="utf-8")
+        (job_paths.logs_dir / "paper_session_state.json").write_text("{}", encoding="utf-8")
+
+    adapter = PaperDomainAdapter(runtime)
+    monkeypatch.setattr(adapter, "_run_real_loop", fake_run_real_loop)
     result = adapter.run(_paper_job(tmp_path, pdf_path))
     assert result["validation_report"].status == "skipped"
     artifact_types = {item.artifact_type for item in result["artifacts"]}
@@ -88,15 +109,59 @@ def test_paper_adapter_stages_artifacts(tmp_path: Path, monkeypatch) -> None:
     assert (job_paths.workspace_dir / "agent" / "final_self_check.md").exists()
 
 
+def test_paper_adapter_requires_docker(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AISCI_REPO_ROOT", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    pdf_path = tmp_path / "sample.pdf"
+    _make_pdf(pdf_path)
+    runtime = DockerRuntimeManager()
+    monkeypatch.setattr(runtime, "can_use_docker", lambda: False)
+    adapter = PaperDomainAdapter(runtime)
+
+    try:
+        adapter.run(_paper_job(tmp_path, pdf_path))
+    except DockerRuntimeError as exc:
+        assert "No local fallback loop is available" in str(exc)
+    else:
+        raise AssertionError("Expected DockerRuntimeError when Docker is unavailable")
+
+
 def test_mle_adapter_stages_summary_and_submission(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("AISCI_REPO_ROOT", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     (tmp_path / "docker").mkdir(parents=True, exist_ok=True)
     (tmp_path / "docker" / "mle.Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
     bundle = tmp_path / "workspace.zip"
     with ZipFile(bundle, "w") as zf:
         zf.writestr("description.md", "# task")
         zf.writestr("sample_submission.csv", "id,target\n1,0\n")
-    adapter = MLEDomainAdapter(DockerRuntimeManager())
+    runtime = DockerRuntimeManager()
+    monkeypatch.setattr(runtime, "can_use_docker", lambda: True)
+
+    def fake_run_real_loop(job, job_paths) -> None:  # noqa: ANN001
+        analysis_dir = job_paths.workspace_dir / "agent" / "analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        submission_dir = job_paths.workspace_dir / "submission"
+        candidates_dir = submission_dir / "candidates"
+        candidates_dir.mkdir(parents=True, exist_ok=True)
+        (analysis_dir / "summary.md").write_text("# analysis\n", encoding="utf-8")
+        (job_paths.workspace_dir / "agent" / "prioritized_tasks.md").write_text("# priorities\n", encoding="utf-8")
+        (job_paths.workspace_dir / "agent" / "impl_log.md").write_text("# impl\n", encoding="utf-8")
+        (job_paths.workspace_dir / "agent" / "exp_log.md").write_text("# exp\n", encoding="utf-8")
+        (submission_dir / "submission.csv").write_text("id,target\n1,0\n", encoding="utf-8")
+        candidate = candidates_dir / "submission_001_final.csv"
+        candidate.write_text("id,target\n1,0\n", encoding="utf-8")
+        (submission_dir / "submission_registry.jsonl").write_text(
+            '{"event":"system_snapshot"}\n{"event":"candidate_detail"}\n{"event":"champion_selected"}\n',
+            encoding="utf-8",
+        )
+        (job_paths.logs_dir / "agent.log").write_text("agent log\n", encoding="utf-8")
+        (job_paths.logs_dir / "conversation.jsonl").write_text("{}\n", encoding="utf-8")
+        (job_paths.logs_dir / "summary.json").write_text("{}", encoding="utf-8")
+        (job_paths.artifacts_dir / "champion_report.md").write_text("# Champion Report\n", encoding="utf-8")
+
+    adapter = MLEDomainAdapter(runtime)
+    monkeypatch.setattr(adapter, "_run_real_loop", fake_run_real_loop)
     result = adapter.run(_mle_job(tmp_path, bundle))
     assert result["validation_report"].status == "skipped"
     artifact_types = {item.artifact_type for item in result["artifacts"]}
@@ -109,6 +174,25 @@ def test_mle_adapter_stages_summary_and_submission(tmp_path: Path, monkeypatch) 
     )
     assert "champion_selected" in registry_text
     assert (job_paths.workspace_dir / "submission" / "submission.csv").exists()
+
+
+def test_mle_adapter_requires_docker(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AISCI_REPO_ROOT", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    bundle = tmp_path / "workspace.zip"
+    with ZipFile(bundle, "w") as zf:
+        zf.writestr("description.md", "# task")
+        zf.writestr("sample_submission.csv", "id,target\n1,0\n")
+    runtime = DockerRuntimeManager()
+    monkeypatch.setattr(runtime, "can_use_docker", lambda: False)
+    adapter = MLEDomainAdapter(runtime)
+
+    try:
+        adapter.run(_mle_job(tmp_path, bundle))
+    except DockerRuntimeError as exc:
+        assert "No local fallback loop is available" in str(exc)
+    else:
+        raise AssertionError("Expected DockerRuntimeError when Docker is unavailable")
 
 
 def test_runtime_session_spec_uses_canonical_mounts(tmp_path: Path, monkeypatch) -> None:

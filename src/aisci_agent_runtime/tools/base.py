@@ -42,6 +42,17 @@ class Tool(ABC):
         """Return the OpenAI Chat-Completions tool definition dict."""
         ...
 
+    def supports_constraints(self) -> bool:
+        """Whether this tool knows how to enforce paper-specific constraints."""
+        return False
+
+    def execute_with_constraints(self, shell, constraints: dict[str, Any] | None = None, **kwargs) -> str:
+        """Execute with optional constraint metadata.
+
+        Tools that do not override this path simply ignore constraints.
+        """
+        return self.execute(shell, **kwargs)
+
 
 class SubagentCompleteTool(Tool):
     """Standard tool for a subagent to signal completion."""

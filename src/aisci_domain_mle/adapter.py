@@ -12,7 +12,6 @@ from aisci_core.models import JobRecord, MLESpec, ValidationReport, WorkspaceLay
 from aisci_core.paths import ensure_job_dirs, resolve_job_paths
 from aisci_agent_runtime.llm_profiles import llm_env
 from aisci_core.models import ArtifactRecord, RunPhase
-from aisci_domain_mle.bootstrap_orchestrator import BootstrapMLEOrchestrator
 from aisci_domain_mle.candidate_registry import CandidateRegistry
 from aisci_runtime_docker.profiles import default_mle_profile
 from aisci_runtime_docker.runtime import DockerRuntimeError, DockerRuntimeManager
@@ -21,7 +20,6 @@ from aisci_runtime_docker.runtime import DockerRuntimeError, DockerRuntimeManage
 class MLEDomainAdapter:
     def __init__(self, runtime: DockerRuntimeManager):
         self.runtime = runtime
-        self.bootstrap = BootstrapMLEOrchestrator()
 
     def run(self, job: JobRecord) -> dict[str, object]:
         assert isinstance(job.mode_spec, MLESpec)
@@ -34,25 +32,26 @@ class MLEDomainAdapter:
         if not (code_dir / ".git").exists():
             subprocess.run(["git", "init"], cwd=code_dir, check=False, capture_output=True)
 
-        if self.runtime.can_use_docker() and os.environ.get("AISCI_FORCE_BOOTSTRAP_LOOP") != "1":
-            try:
-                self._run_real_loop(job, job_paths)
-            except DockerRuntimeError as exc:
-                append_log(
-                    job_paths.logs_dir / "job.log",
-                    f"falling back to bootstrap MLE loop: {exc}",
-                )
-                artifacts = self.bootstrap.run(job, job_paths)
-                validation = self._maybe_validate(job, job_paths)
-                return {"artifacts": artifacts, "validation_report": validation}
-        else:
-            artifacts = self.bootstrap.run(job, job_paths)
-            validation = self._maybe_validate(job, job_paths)
-            return {"artifacts": artifacts, "validation_report": validation}
+        self._ensure_runtime_ready(job, job_paths)
+        self._run_real_loop(job, job_paths)
 
         artifacts = self._collect_artifacts(job_paths)
         validation = self._maybe_validate(job, job_paths)
         return {"artifacts": artifacts, "validation_report": validation}
+
+    def _ensure_runtime_ready(self, job: JobRecord, job_paths) -> None:
+        if not self.runtime.can_use_docker():
+            message = "MLE mode requires a reachable Docker daemon. No local fallback loop is available."
+            append_log(job_paths.logs_dir / "job.log", message)
+            raise DockerRuntimeError(message)
+        env = llm_env(job.llm_profile)
+        if not any(env.get(key) for key in ("OPENAI_API_KEY", "AZURE_OPENAI_API_KEY")):
+            message = (
+                "MLE mode requires OPENAI_API_KEY or AZURE_OPENAI_API_KEY in the host environment. "
+                "No local fallback loop is available."
+            )
+            append_log(job_paths.logs_dir / "job.log", message)
+            raise RuntimeError(message)
 
     def _stage_inputs(self, spec: MLESpec, job_paths) -> None:
         data_dir = job_paths.workspace_dir / "data"

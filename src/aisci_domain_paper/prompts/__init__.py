@@ -16,11 +16,19 @@ from aisci_domain_paper.prompts.templates import (
     SEARCH_STRATEGIST_PROMPT,
     STRUCTURE_SYSTEM_PROMPT,
     SYNTHESIS_SYSTEM_PROMPT,
+    render_experiment_system_prompt,
+    render_explore_system_prompt,
+    render_general_system_prompt,
+    render_implementation_system_prompt,
+    render_main_agent_system_prompt,
+    render_paper_reader_system_prompt,
+    render_plan_system_prompt,
+    render_prioritization_system_prompt,
 )
 
 
 def load_paper_system_prompt() -> str:
-    return MAIN_AGENT_SYSTEM_PROMPT
+    return render_main_agent_system_prompt()
 
 
 __all__ = [
@@ -42,4 +50,12 @@ __all__ = [
     "STRUCTURE_SYSTEM_PROMPT",
     "SYNTHESIS_SYSTEM_PROMPT",
     "load_paper_system_prompt",
+    "render_experiment_system_prompt",
+    "render_explore_system_prompt",
+    "render_general_system_prompt",
+    "render_implementation_system_prompt",
+    "render_main_agent_system_prompt",
+    "render_paper_reader_system_prompt",
+    "render_plan_system_prompt",
+    "render_prioritization_system_prompt",
 ]

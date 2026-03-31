@@ -1,27 +1,86 @@
 """
-Context summarization for the AI Scientist orchestrator.
+Context summarization utilities shared by paper and mle agent loops.
 
-When context length is exceeded, the oldest 30% of turns (by count) can be
-summarized with the same LLM and replaced by a single user message containing
-the summary. Supports incremental summarization (merge with previous summary).
-
-Used only when AISCI_CONTEXT_REDUCE_STRATEGY=summary. See implementation plan:
-  mle-bench_scripts_chenjie/doc/summary_instead_of_prune_implementation_plan.md
+This keeps the message-reduction behavior close to PaperBench:
+- summarize the oldest complete turns instead of dropping them immediately
+- support incremental summaries
+- fall back to prune when summarization fails or is not worthwhile
 """
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aisci_agent_runtime.llm_client import LLMClient
+
+
+SUMMARY_FIRST_TIME_PROMPT = """You are summarizing an earlier part of a long conversation so the agent can continue with condensed context.
+
+Task:
+{task}
+
+Conversation history to summarize:
+{segment}
+
+Produce a concise summary that preserves:
+- important decisions and conclusions
+- file paths, commands, metrics, and outcomes
+- what was already tried
+- what still needs to be done
+
+Output under the heading "Essential Information:" and nothing else.
+"""
+
+
+SUMMARY_INCREMENTAL_PROMPT = """You are merging a previous summary with new conversation content.
+
+Task:
+{task}
+
+Previous summary:
+{last_summary}
+
+New conversation segment:
+{segment}
+
+Produce a single updated summary that preserves:
+- important decisions and conclusions
+- file paths, commands, metrics, and outcomes
+- what was already tried
+- what still needs to be done
+
+Output under the heading "Essential Information:" and nothing else.
+"""
+
+
+SUMMARY_USER_INTRO = (
+    "Below is a summary of the earlier part of the conversation. "
+    "This summary condenses key information from earlier steps; "
+    "please consider it carefully and use it as the basis for further reasoning."
+)
+
+
+@dataclass(frozen=True)
+class SummaryConfig:
+    enabled: bool = True
+    segment_ratio: float = 0.3
+    min_turns: int = 4
+    segment_max_chars: int = 25_000
+    tool_result_max_chars: int = 500
+    incremental: bool = True
+    max_summary_chars: int = 4_000
+    summary_truncate_chars: int = 3_000
+    task_desc_max_chars: int = 2_000
+    max_ratio: float = 0.95
+    ratio_step: float = 0.1
+    min_summary_len: int = 50
+
 
 def parse_rest_into_turns(rest: list[dict]) -> list[list[dict]]:
-    """Parse messages after the first user (rest) into complete turns.
-
-    Turn = (i) one user message, or (ii) one assistant message plus the
-    maximal contiguous following tool messages whose tool_call_id is in that
-    assistant's tool_calls.
-
-    Returns:
-        List of turns; each turn is a list of message dicts (in order).
-    """
+    """Parse messages after the first user into complete turns."""
     turns: list[list[dict]] = []
     i = 0
     while i < len(rest):
@@ -42,12 +101,6 @@ def parse_rest_into_turns(rest: list[dict]) -> list[list[dict]]:
             turns.append(turn)
             i = j
             continue
-        if role == "tool":
-            # Orphan tool message: treat as its own "turn" so we don't skip it
-            turns.append([msg])
-            i += 1
-            continue
-        # Unknown role: single-message turn
         turns.append([msg])
         i += 1
     return turns
@@ -56,35 +109,17 @@ def parse_rest_into_turns(rest: list[dict]) -> list[list[dict]]:
 def serialize_segment_messages(
     segment_messages: list[dict],
     tool_result_max_chars: int = 500,
-    segment_max_chars: int = 25000,
+    segment_max_chars: int = 25_000,
 ) -> str:
-    """Serialize a list of messages (user/assistant/tool) to text for the summary prompt.
-
-    - user: "[User]\\n" + content (flatten list content to text)
-    - assistant: "[Assistant]\\n" + content; if tool_calls, append "\\n[Tool calls: name(args), ...]"
-    - tool: "[Tool result: <id>]\\n" + content truncated to tool_result_max_chars
-
-    If total length > segment_max_chars, truncate from the left (keep tail) and
-    optionally prepend a truncation notice.
-    """
+    """Serialize a message segment into compact plain text for summarization."""
     parts: list[str] = []
     for msg in segment_messages:
         role = msg.get("role", "")
         if role == "user":
-            content = msg.get("content") or ""
-            if isinstance(content, list):
-                content = " ".join(
-                    item.get("text", "") for item in content
-                    if isinstance(item, dict) and item.get("type") == "text"
-                )
+            content = _flatten_content(msg.get("content") or "")
             parts.append("[User]\n" + (content or "(empty)"))
         elif role == "assistant":
-            content = msg.get("content") or ""
-            if isinstance(content, list):
-                content = " ".join(
-                    item.get("text", "") for item in content
-                    if isinstance(item, dict) and item.get("type") == "text"
-                )
+            content = _flatten_content(msg.get("content") or "")
             line = "[Assistant]\n" + (content or "(empty)")
             tool_calls = msg.get("tool_calls") or []
             if tool_calls:
@@ -99,28 +134,132 @@ def serialize_segment_messages(
             parts.append(line)
         elif role == "tool":
             call_id = msg.get("tool_call_id", "?")
-            content = msg.get("content") or ""
-            if isinstance(content, list):
-                content = " ".join(
-                    str(item) for item in content
-                )
+            content = _flatten_content(msg.get("content") or "")
             if len(content) > tool_result_max_chars:
-                content = content[: tool_result_max_chars] + "... (truncated)"
+                content = content[:tool_result_max_chars] + "... (truncated)"
             parts.append(f"[Tool result: {call_id}]\n{content}")
         else:
-            parts.append(f"[{role}]\n{msg.get('content', '')}")
-    segment_str = "\n\n".join(parts)
-    if len(segment_str) > segment_max_chars:
-        segment_str = (
-            "(Earlier part of this segment was truncated due to length.)\n\n"
-            + segment_str[-segment_max_chars:]
+            parts.append(f"[{role}]\n{_flatten_content(msg.get('content') or '')}")
+    segment = "\n\n".join(parts)
+    if len(segment) > segment_max_chars:
+        segment = "(Earlier part of this segment was truncated due to length.)\n\n" + segment[-segment_max_chars:]
+    return segment
+
+
+def summarize_messages(
+    *,
+    llm: "LLMClient",
+    messages: list[dict],
+    config: SummaryConfig,
+    task_description: str = "",
+    last_summary: str | None = None,
+) -> tuple[list[dict], str | None, bool]:
+    """Summarize older complete turns.
+
+    Returns ``(new_messages, updated_summary, succeeded)``.
+    """
+    if not config.enabled:
+        return messages, last_summary, False
+
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    non_system = [m for m in messages if m.get("role") != "system"]
+    if len(non_system) <= 2:
+        return messages, last_summary, False
+
+    first_user = non_system[0] if non_system[0].get("role") == "user" else None
+    rest = non_system[1:] if first_user else non_system
+    turns = parse_rest_into_turns(rest)
+    if len(turns) < config.min_turns:
+        return messages, last_summary, False
+
+    ratio = config.segment_ratio
+    task = _truncate(task_description.strip(), config.task_desc_max_chars)
+
+    while ratio <= config.max_ratio + 1e-9:
+        num_turns = max(1, int(len(turns) * ratio))
+        if num_turns >= len(turns):
+            num_turns = len(turns) - 1
+        if num_turns <= 0:
+            return messages, last_summary, False
+
+        segment_turns = turns[:num_turns]
+        remaining_turns = turns[num_turns:]
+        segment_messages = [msg for turn in segment_turns for msg in turn]
+        remainder_messages = [msg for turn in remaining_turns for msg in turn]
+
+        prompt = _summary_prompt(
+            task=task,
+            segment=serialize_segment_messages(
+                segment_messages,
+                tool_result_max_chars=config.tool_result_max_chars,
+                segment_max_chars=config.segment_max_chars,
+            ),
+            last_summary=last_summary,
+            use_incremental=config.incremental and bool(last_summary),
         )
-    return segment_str
+        try:
+            response = llm.chat([{"role": "user", "content": prompt}], tools=None)
+        except Exception:
+            ratio += config.ratio_step
+            continue
+
+        raw_summary = (response.text_content or "").strip()
+        summary = _extract_summary(raw_summary)
+        if len(summary) < config.min_summary_len:
+            ratio += config.ratio_step
+            continue
+        if len(summary) > config.max_summary_chars:
+            summary = _truncate(summary, config.summary_truncate_chars)
+
+        summary_message = {
+            "role": "user",
+            "content": f"{SUMMARY_USER_INTRO}\n\n{summary}",
+        }
+        rebuilt = [*system_msgs]
+        if first_user:
+            rebuilt.append(first_user)
+        rebuilt.append(summary_message)
+        rebuilt.extend(remainder_messages)
+        return rebuilt, summary, True
+
+    return messages, last_summary, False
 
 
-# Fixed intro for the summary_user message (plan §7)
-SUMMARY_USER_INTRO = (
-    "Below is a summary of the earlier part of the conversation. "
-    "This summary condenses key information from earlier steps; "
-    "please consider it carefully and use it as the basis for further reasoning and optimization to improve your score."
-)
+def _summary_prompt(*, task: str, segment: str, last_summary: str | None, use_incremental: bool) -> str:
+    if use_incremental and last_summary:
+        return SUMMARY_INCREMENTAL_PROMPT.format(
+            task=task or "(task description unavailable)",
+            last_summary=last_summary,
+            segment=segment,
+        )
+    return SUMMARY_FIRST_TIME_PROMPT.format(
+        task=task or "(task description unavailable)",
+        segment=segment,
+    )
+
+
+def _flatten_content(content: str | list | object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            item.get("text", "") if isinstance(item, dict) else str(item)
+            for item in content
+        )
+    return str(content)
+
+
+def _extract_summary(text: str) -> str:
+    if not text:
+        return ""
+    match = re.search(r"Essential Information:\s*(.*)", text, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text.strip()
+
+
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    keep = max(1, limit // 2)
+    return text[:keep] + "\n...[truncated]...\n" + text[-keep:]

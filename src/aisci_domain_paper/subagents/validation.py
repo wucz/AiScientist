@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from aisci_domain_paper.subagents.base import PaperSubagent
-from aisci_domain_paper.tools import build_generic_tools
+from aisci_domain_paper.tools import build_general_tools
 
 
 VALIDATION_SYSTEM_PROMPT = """You are a Validation Agent for an AI paper reproduction project.
@@ -21,4 +21,4 @@ class PaperValidationSubagent(PaperSubagent):
         return VALIDATION_SYSTEM_PROMPT
 
     def get_tools(self):
-        return build_generic_tools()
+        return build_general_tools(self.capabilities)

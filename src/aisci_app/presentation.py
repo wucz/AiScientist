@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -51,14 +52,39 @@ def _paper_paths(job: JobRecord) -> dict[str, Path]:
     }
 
 
+def _resolved_paper_capabilities(job: JobRecord) -> dict[str, Any]:
+    if job.job_type != JobType.PAPER:
+        return {}
+    path = _paper_paths(job)["workspace"] / "agent" / "capabilities.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def paper_capability_flags(job: JobRecord) -> dict[str, str]:
     if job.job_type != JobType.PAPER:
         return {}
     assert isinstance(job.mode_spec, PaperSpec)
     runtime = job.runtime_profile
+    resolved = _resolved_paper_capabilities(job)
+    online = resolved.get("online_research")
+    github = resolved.get("github_research")
+    linter = resolved.get("linter")
     return {
-        "online_research": "enabled" if job.mode_spec.enable_online_research else "disabled",
-        "github_research": "enabled" if job.mode_spec.enable_github_research else "disabled",
+        "online_research": (
+            "available"
+            if isinstance(online, dict) and online.get("available")
+            else ("requested" if job.mode_spec.enable_online_research else "disabled")
+        ),
+        "github_research": (
+            "available"
+            if isinstance(github, dict) and github.get("available")
+            else ("requested" if job.mode_spec.enable_github_research else "disabled")
+        ),
+        "linter": "available" if isinstance(linter, dict) and linter.get("available", False) else "enabled",
         "final_self_check": "enabled" if runtime.run_final_validation else "disabled",
         "validation_strategy": runtime.validation_strategy.value,
         "workspace_layout": runtime.workspace_layout.value if runtime.workspace_layout else "paper",
@@ -78,9 +104,13 @@ def paper_log_targets(job: JobRecord) -> list[PaperLogTarget]:
         ("conversation log", logs_dir / "conversation.jsonl", "conversation"),
         ("agent log", logs_dir / "agent.log", "agent"),
         ("subagent logs", subagent_dir, "subagent"),
+        ("session state", logs_dir / "paper_session_state.json", "state"),
         ("validation report", paths["artifacts"] / "validation_report.json", "validation"),
         ("self-check report", paths["workspace"] / "agent" / "final_self_check.md", "validation"),
     ]
+    if subagent_dir.exists():
+        for session_dir in sorted(path for path in subagent_dir.iterdir() if path.is_dir())[:20]:
+            candidates.append((f"session: {session_dir.name}", session_dir, "subagent_session"))
     return [PaperLogTarget(label, str(path), path.exists(), kind) for label, path, kind in candidates]
 
 
@@ -97,10 +127,13 @@ def paper_artifact_hints(job: JobRecord) -> list[PaperArtifactHint]:
         ("paper experiments", analysis / "experiments.md", "Dataset, metrics, and experiment plan."),
         ("paper baseline", analysis / "baseline.md", "Baseline methods and comparison set."),
         ("prioritized tasks", paths["workspace"] / "agent" / "prioritized_tasks.md", "Ranked implementation plan."),
+        ("plan", paths["workspace"] / "agent" / "plan.md", "Current planning note for auxiliary planning work."),
         ("implementation log", paths["workspace"] / "agent" / "impl_log.md", "Changelog for code changes."),
         ("experiment log", paths["workspace"] / "agent" / "exp_log.md", "Experiment history and results."),
         ("capability report", paths["workspace"] / "agent" / "capabilities.json", "Resolved online research and validation capabilities."),
+        ("main prompt snapshot", paths["workspace"] / "agent" / "paper_main_prompt.md", "Final rendered main-agent prompt used for this run."),
         ("self-check report", paths["workspace"] / "agent" / "final_self_check.md", "Latest clean reproducibility report."),
+        ("self-check report json", paths["workspace"] / "agent" / "final_self_check.json", "Structured self-check result for automation and UI."),
         ("reproduce script", submission / "reproduce.sh", "Entry point for local and final self-check."),
     ]
     return [PaperArtifactHint(label, str(path), path.exists(), purpose) for label, path, purpose in candidates]
@@ -308,18 +341,18 @@ def paper_doctor_report() -> list[PaperDoctorCheck]:
                 check=False,
                 timeout=10,
             )
-            status = "ok" if result.returncode == 0 else "warn"
+            status = "ok" if result.returncode == 0 else "fail"
             detail = (
                 "docker daemon reachable"
                 if result.returncode == 0
-                else (result.stderr or result.stdout or "docker info failed")
+                else ((result.stderr or result.stdout or "docker info failed") + "; paper jobs will not start without Docker")
             )
         except Exception as exc:
-            status = "warn"
-            detail = str(exc)
+            status = "fail"
+            detail = f"{exc}; paper jobs will not start without Docker"
     else:
         status = "fail"
-        detail = "docker binary not found"
+        detail = "docker binary not found; paper jobs will not start without Docker"
     checks.append(PaperDoctorCheck("docker", status, detail))
     profile_name = os.environ.get("AISCI_PAPER_DOCTOR_PROFILE", "gpt-5.4-responses")
     profile = resolve_llm_profile(profile_name)
@@ -334,8 +367,28 @@ def paper_doctor_report() -> list[PaperDoctorCheck]:
     checks.append(
         PaperDoctorCheck(
             "api_key",
-            "ok" if api_key else "warn",
-            "LLM credentials detected" if api_key else "No API key detected in environment",
+            "ok" if api_key else "fail",
+            (
+                "LLM credentials detected"
+                if api_key
+                else "No API key detected in environment; paper jobs will not start without OPENAI_API_KEY or AZURE_OPENAI_API_KEY"
+            ),
+        )
+    )
+    github_token = bool(os.environ.get("GITHUB_TOKEN"))
+    checks.append(
+        PaperDoctorCheck(
+            "github_token",
+            "ok" if github_token else "warn",
+            "GitHub research can be enabled" if github_token else "GITHUB_TOKEN not set; github tool will be removed from live prompts",
+        )
+    )
+    web_search_enabled = os.environ.get("AISCI_WEB_SEARCH", "").strip().lower() in {"1", "true", "yes", "on"}
+    checks.append(
+        PaperDoctorCheck(
+            "online_research",
+            "ok" if web_search_enabled else "warn",
+            "AISCI_WEB_SEARCH is enabled" if web_search_enabled else "AISCI_WEB_SEARCH is off; web_search/link_summary will be removed from live prompts",
         )
     )
     checks.append(

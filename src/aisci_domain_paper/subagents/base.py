@@ -20,6 +20,8 @@ class PaperSubagent(Subagent):
         self.engine = engine
         self.objective = objective
         self.context = context
+        self.capabilities = engine._capabilities()
+        self.constraints = engine.constraints()
 
     def build_context(self) -> str:
         parts = [

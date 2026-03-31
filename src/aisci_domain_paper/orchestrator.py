@@ -46,7 +46,10 @@ def _has_llm_credentials() -> bool:
 
 def _build_llm(profile_name: str, *, enable_online_research: bool):
     if not _has_llm_credentials():
-        return None
+        raise RuntimeError(
+            "Paper mode requires OPENAI_API_KEY or AZURE_OPENAI_API_KEY. "
+            "No local fallback loop is available."
+        )
     profile = resolve_llm_profile(profile_name)
     return create_llm_client(
         LLMConfig(
@@ -113,7 +116,6 @@ class PaperOrchestrator:
                 reminder_freq=int(os.environ.get("AISCI_REMINDER_FREQ", "5")),
                 enable_online_research=job.mode_spec.enable_online_research,
                 enable_github_research=job.mode_spec.enable_github_research,
-                bootstrap_only=_bool_env("AISCI_FORCE_BOOTSTRAP_LOOP", False),
             ),
             shell=workspace.shell,
             llm=_build_llm(
@@ -145,6 +147,11 @@ def main() -> None:
     submission_dir = Path("/home/submission")
     agent_dir = Path("/home/agent")
     trace = AgentTraceWriter(logs_dir)
+    if not _has_llm_credentials():
+        raise RuntimeError(
+            "Paper mode requires OPENAI_API_KEY or AZURE_OPENAI_API_KEY. "
+            "No local fallback loop is available."
+        )
     engine = EmbeddedPaperEngine(
         config=PaperRuntimeConfig(
             job_id=os.environ.get("AISCI_JOB_ID", "paper-job"),
@@ -155,7 +162,6 @@ def main() -> None:
             reminder_freq=int(os.environ.get("AISCI_REMINDER_FREQ", "5")),
             enable_online_research=_bool_env("AISCI_ENABLE_ONLINE_RESEARCH", True),
             enable_github_research=_bool_env("AISCI_ENABLE_GITHUB_RESEARCH", True),
-            bootstrap_only=_bool_env("AISCI_FORCE_BOOTSTRAP_LOOP", False) or not _has_llm_credentials(),
         ),
         shell=ShellInterface("/home"),
         llm=_build_llm(

@@ -116,7 +116,7 @@ def markdown_join(title: str, body_lines: Iterable[str]) -> str:
     return "\n".join([f"# {title}", "", *body_lines]).rstrip() + "\n"
 
 
-def build_bootstrap_reproduce_script(objective: str, *, extra_notes: str = "") -> str:
+def build_reproduce_scaffold_script(objective: str, *, extra_notes: str = "") -> str:
     notes = extra_notes.strip()
     return (
         "#!/usr/bin/env bash\n"
