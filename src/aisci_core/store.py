@@ -99,6 +99,8 @@ class JobStore:
             )
 
     def create_job(self, spec: JobSpec) -> JobRecord:
+        if isinstance(spec.mode_spec, PaperSpec) and spec.mode_spec.uses_legacy_inputs:
+            raise ValueError(spec.mode_spec.legacy_operation_error("be created as a new job in this version"))
         now = datetime.now().astimezone()
         job_id = _new_job_id(now)
         with self.connect() as conn:

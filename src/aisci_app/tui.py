@@ -127,141 +127,6 @@ MASCOT_FACES = {
     ),
 }
 
-MASCOT_FRAMES: dict[str, list[list[str]]] = {
-    "idle": [
-        [
-            "        .-o-.         ",
-            "    .--/___\\--.       ",
-            "  .'/[]|o o|[]\\`.     ",
-            " / /   | u |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   | ... |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/ \\_\\._.'     ",
-        ],
-        [
-            "        .-o-.         ",
-            "    .--/___\\--.       ",
-            "  .'/[]|- -|[]\\`.     ",
-            " / /   | u |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   | ... |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/ \\_\\._.'     ",
-        ],
-    ],
-    "analyze": [
-        [
-            "        .-o-.         ",
-            "    .--/___\\--.       ",
-            "  .'/[]|o O|[]\\`.     ",
-            " / /   | u |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   | ?.. |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/ \\_\\._.'     ",
-        ],
-        [
-            "        .-o-.         ",
-            "    .--/___\\--.       ",
-            "  .'/[]|O o|[]\\`.     ",
-            " / /   | u |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   | ..? |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/ \\_\\._.'     ",
-        ],
-    ],
-    "implement": [
-        [
-            "        .-o-.         ",
-            "    .--/___\\--.       ",
-            "  .'/[]|o o|[]\\`.     ",
-            " / /   | u |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   | >_  |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/ \\_\\._.'     ",
-        ],
-        [
-            "        .-o-.         ",
-            "    .--/___\\--.       ",
-            "  .'/[]|o o|[]\\`.     ",
-            " / /   | u |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   | >   |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/ \\_\\._.'     ",
-        ],
-    ],
-    "validate": [
-        [
-            "        .-o-.         ",
-            "    .--/___\\--.       ",
-            "  .'/[]|^ ^|[]\\`.     ",
-            " / /   | u |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   | >_  |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/v\\_\\._.'     ",
-        ],
-        [
-            "        .-o-.         ",
-            "    .--/___\\--.       ",
-            "  .'/[]|^ ^|[]\\`.     ",
-            " / /   | u |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   | >   |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/v\\_\\._.'     ",
-        ],
-    ],
-    "finalize": [
-        [
-            "        .-*- .        ",
-            "    .--/___\\--.       ",
-            "  .'/[]|^ ^|[]\\`.     ",
-            " / /   | u |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   | *** |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/ \\_\\._.'     ",
-        ],
-        [
-            "        .-*-.         ",
-            "    .--/___\\--.       ",
-            "  .'/[]|^ ^|[]\\`.     ",
-            " / /   | u |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   | *** |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/ \\_\\._.'     ",
-        ],
-    ],
-    "failed": [
-        [
-            "        .-o-.         ",
-            "    .--/___\\--.       ",
-            "  .'/[]|x x|[]\\`.     ",
-            " / /   | _ |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   | !!  |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/ \\_\\._.'     ",
-        ],
-        [
-            "        .-o-.         ",
-            "    .--/___\\--.       ",
-            "  .'/[]|x x|[]\\`.     ",
-            " / /   | _ |   \\ \\    ",
-            "| |   ._____.   | |   ",
-            "| |   |  !! |   | |   ",
-            " \\ \\  '-----'  / /    ",
-            "  '._./_/ \\_\\._.'     ",
-        ],
-    ],
-}
-
 MLE_TUI_PROFILE_OPTIONS = ("glm-5", "gpt-5.4", "gemini-3-flash")
 MLE_TUI_INPUT_MODES = ("competition_name", "local_zip", "data_dir")
 MLE_TUI_PULL_POLICIES = ("profile-default", "if-missing", "always", "never")
@@ -931,6 +796,7 @@ class _DashboardApp:
         self._selected_index = 0
         self._job_ids: list[str] = []
         self._focus_job_id = initial_job_id
+        self._subagent_count_cache: dict[str, dict[str, Any]] = {}
 
     def run(self) -> TUIRunResult:
         snapshot = self._build_snapshot()
@@ -1056,14 +922,17 @@ class _DashboardApp:
                 "agent.log": _tail_text(paths.logs_dir / "agent.log", PREVIEW_LINES),
             },
             artifact_lines=artifact_lines,
-            artifact_tree=_workspace_tree_text(paths.workspace_dir, depth=2),
+            artifact_tree=_workspace_tree_text(paths.workspace_dir, depth=4),
             conversation_view=_conversation_view_text(paths.logs_dir / "conversation.jsonl", limit=24),
             gpu_stats=selected_gpu_stats,
             gpu_processes=selected_gpu_processes,
             gpu_history=selected_gpu_history,
             gpu_error=gpu_error,
             gpu_process_error=gpu_process_error,
-            subagent_counts=_collect_subagent_counts(paths.logs_dir / "conversation.jsonl"),
+            subagent_counts=_collect_subagent_counts(
+                paths.logs_dir / "conversation.jsonl",
+                cache_store=self._subagent_count_cache,
+            ),
         )
 
     def _current_gpu_metrics(self) -> tuple[list[GpuStat], list[GpuProcess], str | None, str | None]:
@@ -1348,10 +1217,10 @@ class _DashboardApp:
             artifact_height = total_height
             events_height = total_height
         else:
-            artifact_height, events_height = _split_heights(total_height, parts=2, min_height=6)
+            artifact_height, events_height = _split_weighted_heights(total_height, ratios=[3, 2], min_height=6)
 
-        artifact_lines = max(artifact_height - 4, 3)
-        event_lines = max(events_height - 4, 3)
+        artifact_lines = max(artifact_height - 2, 3)
+        event_lines = max(events_height - 2, 3)
         records = _recent_events(detail.row.job, limit=max(event_lines * 2, EVENT_LIMIT))
         body = _render_recent_events(records, max_items=event_lines)
         artifacts_panel = Panel(
@@ -1810,7 +1679,13 @@ def _truncate_block_lines(text: str, *, max_lines: int) -> str:
         return text
     if max_lines == 1:
         return "..."
-    return "\n".join([*lines[: max_lines - 1], "..."])
+    if max_lines == 2:
+        return "\n".join(["...", lines[-1]])
+    visible = max_lines - 1
+    head_count = max(1, round(visible * 0.2))
+    head_count = min(head_count, visible - 1)
+    tail_count = visible - head_count
+    return "\n".join([*lines[:head_count], "...", *lines[-tail_count:]])
 
 
 def _split_heights(total: int, *, parts: int, min_height: int) -> list[int]:
@@ -1823,6 +1698,26 @@ def _split_heights(total: int, *, parts: int, min_height: int) -> list[int]:
     for index in range(remainder):
         heights[-(index + 1)] += 1
     return [max(height, min_height) for height in heights]
+
+
+def _split_weighted_heights(total: int, *, ratios: list[int], min_height: int) -> list[int]:
+    if not ratios:
+        return []
+    ratios = [max(value, 1) for value in ratios]
+    count = len(ratios)
+    total = max(total, count * min_height)
+    remaining = total - count * min_height
+    ratio_sum = sum(ratios)
+    heights = [min_height] * count
+    if ratio_sum <= 0 or remaining <= 0:
+        return heights
+    extras = [(remaining * ratio) // ratio_sum for ratio in ratios]
+    assigned = sum(extras)
+    for index, extra in enumerate(extras):
+        heights[index] += extra
+    for index in range(remaining - assigned):
+        heights[index % count] += 1
+    return heights
 
 
 def _log_panel_layout(total_height: int, *, names: list[str]) -> dict[str, tuple[int, int]]:
@@ -2040,13 +1935,18 @@ def _workspace_tree_text(path: Path, *, depth: int) -> str:
         return "/home\n└── [missing]"
 
     ignored = {".git", "venv", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache"}
+    root_ignored = {"logs"}
     lines = ["/home"]
 
     def walk(current: Path, prefix: str, level: int) -> None:
         if level >= depth:
             return
         try:
-            visible_children = [child for child in current.iterdir() if child.name not in ignored]
+            visible_children = [
+                child
+                for child in current.iterdir()
+                if child.name not in ignored and not (current == path and child.name in root_ignored)
+            ]
         except PermissionError:
             lines.append(f"{prefix}└── [permission denied]")
             return
@@ -2164,18 +2064,92 @@ def _phase_from_tool_name(tool_name: str | None) -> str | None:
     return None
 
 
-def _collect_subagent_counts(path: Path) -> list[tuple[str, int]]:
-    records = _load_recent_jsonl(path, limit=256)
-    counts: dict[str, int] = {}
-    for record in records:
+def _collect_subagent_counts(
+    path: Path,
+    *,
+    cache_store: dict[str, dict[str, Any]] | None = None,
+) -> list[tuple[str, int]]:
+    resolved = str(path.resolve())
+    store = cache_store if cache_store is not None else {}
+    if not path.exists() or not path.is_file():
+        store.pop(resolved, None)
+        return []
+
+    size = path.stat().st_size
+    entry = store.get(resolved)
+    if not _subagent_count_cache_valid(entry, resolved, size):
+        entry = {
+            "path": resolved,
+            "offset": 0,
+            "size": 0,
+            "buffer": "",
+            "counts": {},
+            "order": [],
+        }
+        store[resolved] = entry
+    if size == int(entry["size"]):
+        return _subagent_count_items(entry)
+
+    with path.open("rb") as handle:
+        handle.seek(int(entry["offset"]))
+        chunk = handle.read()
+        entry["offset"] = handle.tell()
+    entry["size"] = size
+    payload = f'{entry["buffer"]}{chunk.decode("utf-8", errors="replace")}'
+    entry["buffer"] = ""
+    for raw_line in payload.splitlines(keepends=True):
+        if raw_line and not raw_line.endswith(("\n", "\r")):
+            entry["buffer"] = raw_line
+            continue
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
         event_type = _string_value(record.get("event_type")) or _string_value(record.get("event"))
         if event_type != "subagent_start":
             continue
         kind = _subagent_kind(record)
         if not kind:
             continue
-        counts[kind] = counts.get(kind, 0) + 1
-    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        counts = entry["counts"]
+        order = entry["order"]
+        if kind not in counts:
+            counts[kind] = 0
+            order.append(kind)
+        counts[kind] += 1
+    return _subagent_count_items(entry)
+
+
+def _subagent_count_cache_valid(entry: dict[str, Any] | None, path: str, size: int) -> bool:
+    if not entry:
+        return False
+    if entry.get("path") != path:
+        return False
+    if int(entry.get("offset", 0)) > size:
+        return False
+    if int(entry.get("size", 0)) > size:
+        return False
+    if not isinstance(entry.get("counts"), dict):
+        return False
+    if not isinstance(entry.get("order"), list):
+        return False
+    return True
+
+
+def _subagent_count_items(entry: dict[str, Any]) -> list[tuple[str, int]]:
+    counts = entry.get("counts", {})
+    order = entry.get("order", [])
+    items: list[tuple[str, int]] = []
+    for name in order:
+        value = counts.get(name)
+        if isinstance(name, str) and isinstance(value, int) and value > 0:
+            items.append((name, value))
+    return items
 
 
 def _subagent_kind(record: dict[str, Any]) -> str | None:

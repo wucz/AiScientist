@@ -92,21 +92,44 @@ class RuntimeProfile(BaseModel):
 
 
 class PaperSpec(BaseModel):
+    paper_md_path: str | None = None
+    paper_zip_path: str | None = None
     pdf_path: str | None = None
     paper_bundle_zip: str | None = None
-    paper_md_path: str | None = None
+    context_bundle_zip: str | None = None
     rubric_path: str | None = None
     blacklist_path: str | None = None
     addendum_path: str | None = None
-    context_bundle_zip: str | None = None
     supporting_materials: list[str] = Field(default_factory=list)
     submission_seed_repo_zip: str | None = None
     enable_online_research: bool = True
 
+    @property
+    def legacy_input_fields(self) -> tuple[str, ...]:
+        legacy_fields: list[str] = []
+        if self.pdf_path:
+            legacy_fields.append("pdf_path")
+        if self.paper_bundle_zip:
+            legacy_fields.append("paper_bundle_zip")
+        if self.context_bundle_zip:
+            legacy_fields.append("context_bundle_zip")
+        return tuple(legacy_fields)
+
+    @property
+    def uses_legacy_inputs(self) -> bool:
+        return bool(self.legacy_input_fields)
+
+    def legacy_operation_error(self, operation: str) -> str:
+        legacy_fields = ", ".join(self.legacy_input_fields)
+        return (
+            f"paper job uses deprecated inputs ({legacy_fields}) and cannot {operation}; "
+            "recreate it with --paper-md and/or --zip"
+        )
+
     @model_validator(mode="after")
     def validate_inputs(self) -> "PaperSpec":
-        if not any([self.pdf_path, self.paper_bundle_zip, self.paper_md_path]):
-            raise ValueError("paper job requires pdf_path, paper_bundle_zip, or paper_md_path")
+        if not any([self.paper_md_path, self.paper_zip_path]) and not self.uses_legacy_inputs:
+            raise ValueError("paper job requires paper_md_path or paper_zip_path")
         return self
 
 

@@ -224,9 +224,11 @@ def _log_targets_for_kind(job_id: str, kind: str, subagent: str | None = None) -
 
 @paper_app.command("run")
 def run_paper(
-    pdf: Annotated[str | None, typer.Option("--pdf")] = None,
-    paper_bundle_zip: Annotated[str | None, typer.Option("--paper-bundle-zip")] = None,
     paper_md: Annotated[str | None, typer.Option("--paper-md")] = None,
+    paper_zip: Annotated[
+        str | None,
+        typer.Option("--zip", help="Archive extracted into /home/paper before the paper loop starts."),
+    ] = None,
     llm_profile: Annotated[
         str | None,
         typer.Option("--llm-profile", help="Profile key from the LLM profiles YAML registry."),
@@ -242,7 +244,6 @@ def run_paper(
         PullPolicy | None,
         typer.Option("--pull-policy", help="Image pull policy: if-missing, always, or never."),
     ] = None,
-    inputs_zip: Annotated[str | None, typer.Option("--inputs-zip")] = None,
     rubric_path: Annotated[str | None, typer.Option("--rubric-path")] = None,
     blacklist_path: Annotated[str | None, typer.Option("--blacklist-path")] = None,
     addendum_path: Annotated[str | None, typer.Option("--addendum-path")] = None,
@@ -268,14 +269,12 @@ def run_paper(
     if tui and not _is_interactive_terminal():
         raise typer.BadParameter("--tui requires an interactive terminal.")
     spec = build_paper_job_spec(
-        pdf_path=pdf,
-        paper_bundle_zip=paper_bundle_zip,
         paper_md_path=paper_md,
+        paper_zip_path=paper_zip,
         llm_profile=selected_llm_profile,
         gpus=gpus,
         gpu_ids=gpu_ids,
         time_limit=time_limit,
-        inputs_zip=inputs_zip,
         rubric_path=rubric_path,
         blacklist_path=blacklist_path,
         addendum_path=addendum_path,
@@ -318,7 +317,7 @@ def paper_doctor(json_output: Annotated[bool, typer.Option("--json/--text")] = F
         typer.echo(f"- {check.name}: {check.status} ({check.detail})")
     typer.echo("")
     typer.echo("Start a paper job with:")
-    typer.echo("  aisci paper run --pdf /path/to/paper.pdf --wait --tui")
+    typer.echo("  aisci paper run --paper-md /path/to/paper.md --wait --tui")
 
 
 @paper_app.command("validate")
@@ -327,9 +326,13 @@ def paper_validate(
     detach: Annotated[bool, typer.Option("--detach/--wait")] = True,
 ) -> None:
     job = _get_job_or_exit(job_id)
-    spec = build_job_spec_clone(job, objective_suffix=" [self-check]", run_final_validation=True)
     service = JobService()
-    new_job = service.create_job(spec)
+    try:
+        spec = build_job_spec_clone(job, objective_suffix=" [self-check]", run_final_validation=True)
+        new_job = service.create_job(spec)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     wait = not detach
     worker_value = service.spawn_worker(new_job.id, wait=wait)
     _emit_job_launch_result(
@@ -347,9 +350,13 @@ def paper_resume(
     detach: Annotated[bool, typer.Option("--detach/--wait")] = True,
 ) -> None:
     job = _get_job_or_exit(job_id)
-    spec = build_job_spec_clone(job, objective_suffix=" [resumed]")
     service = JobService()
-    new_job = service.create_job(spec)
+    try:
+        spec = build_job_spec_clone(job, objective_suffix=" [resumed]")
+        new_job = service.create_job(spec)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     wait = not detach
     worker_value = service.spawn_worker(new_job.id, wait=wait)
     _emit_job_launch_result(
@@ -364,8 +371,17 @@ def paper_resume(
 @mle_app.command("run")
 def run_mle(
     ctx: typer.Context,
-    competition_name: Annotated[str | None, typer.Option("--name")] = None,
-    competition_zip_path: Annotated[str | None, typer.Option("--zip")] = None,
+    competition_name: Annotated[
+        str | None,
+        typer.Option(
+            "--name",
+            help="Canonical competition slug used for prepared-cache lookup, runtime planning, and grading metadata.",
+        ),
+    ] = None,
+    competition_zip_path: Annotated[
+        str | None,
+        typer.Option("--zip", help="Local competition archive. If --name is omitted, the zip stem is used."),
+    ] = None,
     mlebench_data_dir: Annotated[
         str | None,
         typer.Option(

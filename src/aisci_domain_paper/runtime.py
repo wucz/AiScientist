@@ -5,8 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from pypdf import PdfReader
-
 from aisci_core.models import JobPaths
 from aisci_domain_paper.paper_compat import MappedShellInterface, PathMapper
 
@@ -43,7 +41,7 @@ def build_workspace(job_paths: JobPaths) -> PaperWorkspace:
             "/home/paper": paper_dir,
             "/home/submission": submission_dir,
             "/home/agent": agent_dir,
-            "/home/logs": logs_dir,
+            "/workspace/logs": logs_dir,
             "/home/code": submission_dir,
         }
     )
@@ -81,20 +79,6 @@ def ensure_submission_repo(submission_dir: Path) -> None:
             ),
             encoding="utf-8",
         )
-
-
-def extract_pdf_excerpt(pdf_path: Path, *, max_pages: int = 3, max_chars: int = 4500) -> str:
-    if not pdf_path.exists():
-        return "No PDF staged.\n"
-    reader = PdfReader(str(pdf_path))
-    chunks: list[str] = []
-    for index, page in enumerate(reader.pages[:max_pages], start=1):
-        text = (page.extract_text() or "").strip()
-        if text:
-            chunks.append(f"## Page {index}\n\n{text[:max_chars]}")
-    return "\n\n".join(chunks) if chunks else "No text could be extracted from the PDF.\n"
-
-
 def list_files(root: Path, *, max_entries: int = 120) -> list[str]:
     items: list[str] = []
     if not root.exists():

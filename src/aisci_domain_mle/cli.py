@@ -12,8 +12,11 @@ from aisci_domain_mle.runtime_orchestration import build_runtime_plan
 
 
 def _add_common_mle_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--name")
-    parser.add_argument("--zip", dest="zip_path")
+    parser.add_argument(
+        "--name",
+        help="Canonical competition slug used for prepared-cache lookup, runtime planning, and grading metadata.",
+    )
+    parser.add_argument("--zip", dest="zip_path", help="Local competition archive. Defaults competition name to the zip stem.")
     parser.add_argument("--mlebench-data-dir")
     parser.add_argument("--workspace-zip")
     parser.add_argument("--competition-bundle-zip")

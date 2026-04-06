@@ -313,6 +313,8 @@ def build_job_spec_clone(
     mode_spec = job.mode_spec.model_copy(deep=True)
     if job.job_type == JobType.PAPER:
         assert isinstance(mode_spec, PaperSpec)
+        if mode_spec.uses_legacy_inputs:
+            raise ValueError(mode_spec.legacy_operation_error("be resumed or self-checked in this version"))
     else:
         assert isinstance(mode_spec, MLESpec)
     return JobSpec(
@@ -326,13 +328,11 @@ def build_job_spec_clone(
 
 def build_paper_job_spec(
     *,
-    pdf_path: str | None,
-    paper_bundle_zip: str | None,
     paper_md_path: str | None,
+    paper_zip_path: str | None,
     llm_profile: str,
     gpus: int,
     time_limit: str,
-    inputs_zip: str | None,
     rubric_path: str | None,
     blacklist_path: str | None,
     addendum_path: str | None,
@@ -360,10 +360,8 @@ def build_paper_job_spec(
         llm_profile=llm_profile,
         runtime_profile=runtime,
         mode_spec=PaperSpec(
-            pdf_path=pdf_path,
-            paper_bundle_zip=paper_bundle_zip,
             paper_md_path=paper_md_path,
-            context_bundle_zip=inputs_zip,
+            paper_zip_path=paper_zip_path,
             rubric_path=rubric_path,
             blacklist_path=blacklist_path,
             addendum_path=addendum_path,

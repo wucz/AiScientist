@@ -13,7 +13,6 @@ dependencies = [
   "pandas>=2.2.0",
   "pillow>=10.4.0",
   "pydantic>=2.10.0",
-  "pypdf>=5.4.0",
   "py7zr>=0.22.0",
   "python-multipart>=0.0.9",
   "rich>=13.9.4",

@@ -282,11 +282,13 @@ class AgentSessionManager:
 
     def _layout_mounts(self, job_paths: JobPaths, layout: WorkspaceLayout) -> list[SessionMount]:
         paths = self._layout_paths(job_paths, layout)
-        return [
+        mounts = [
             SessionMount(paths["home"], "/home"),
-            SessionMount(job_paths.logs_dir, "/home/logs"),
             SessionMount(job_paths.logs_dir, "/workspace/logs"),
         ]
+        if layout != WorkspaceLayout.PAPER:
+            mounts.append(SessionMount(job_paths.logs_dir, "/home/logs"))
+        return mounts
 
     def _default_workdir(self, layout: WorkspaceLayout) -> str:
         if layout == WorkspaceLayout.PAPER:

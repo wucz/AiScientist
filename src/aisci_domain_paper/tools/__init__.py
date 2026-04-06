@@ -1,9 +1,13 @@
 from aisci_domain_paper.tools.basic_tool import (
+    CheckDownloadStatusTool,
+    CheckEnvStatusTool,
     MappedFileEditTool,
     PaperGitCommitTool,
     ParseRubricTool,
     PlanWriteTool,
     PriorityWriteTool,
+    RecordDownloadTool,
+    RecordEnvSetupTool,
     SubmitTool,
     build_env_setup_tools,
     build_explore_tools,
@@ -28,11 +32,15 @@ from aisci_domain_paper.tools.prioritization_tool import build_prioritize_tasks_
 from aisci_domain_paper.tools.spawn_subagent_tool import build_main_tools, build_spawn_subagent_tool
 
 __all__ = [
+    "CheckDownloadStatusTool",
+    "CheckEnvStatusTool",
     "MappedFileEditTool",
     "ParseRubricTool",
     "PaperGitCommitTool",
     "PlanWriteTool",
     "PriorityWriteTool",
+    "RecordDownloadTool",
+    "RecordEnvSetupTool",
     "SubmitTool",
     "build_clean_validation_tool",
     "build_env_setup_tools",

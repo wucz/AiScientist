@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 
-from pypdf import PdfWriter
+import pytest
 
 from aisci_core.models import (
     JobRecord,
@@ -26,11 +27,14 @@ from aisci_runtime_docker.profiles import default_mle_profile, default_paper_pro
 from aisci_runtime_docker.runtime import DockerRuntimeError, DockerRuntimeManager
 
 
-def _make_pdf(path: Path) -> None:
-    writer = PdfWriter()
-    writer.add_blank_page(width=200, height=200)
-    with path.open("wb") as handle:
-        writer.write(handle)
+def _make_paper_md(path: Path) -> None:
+    path.write_text("# Sample Paper\n\nThis is a paper fixture.\n", encoding="utf-8")
+
+
+def _make_paper_zip(path: Path) -> None:
+    with ZipFile(path, "w") as zf:
+        zf.writestr("paper.md", "# Zipped Paper\n")
+        zf.writestr("notes/context.txt", "zip fixture\n")
 
 
 def _write_llm_config(root: Path) -> None:
@@ -88,7 +92,13 @@ profiles:
     )
 
 
-def _paper_job(tmp_path: Path, pdf_path: Path, *, run_final_validation: bool = False) -> JobRecord:
+def _paper_job(
+    tmp_path: Path,
+    paper_md_path: Path,
+    *,
+    paper_zip_path: Path | None = None,
+    run_final_validation: bool = False,
+) -> JobRecord:
     now = __import__("datetime").datetime.now().astimezone()
     return JobRecord(
         id="paper-job",
@@ -101,7 +111,10 @@ def _paper_job(tmp_path: Path, pdf_path: Path, *, run_final_validation: bool = F
             run_final_validation=run_final_validation,
             workspace_layout=WorkspaceLayout.PAPER,
         ),
-        mode_spec=PaperSpec(pdf_path=str(pdf_path)),
+        mode_spec=PaperSpec(
+            paper_md_path=str(paper_md_path),
+            paper_zip_path=str(paper_zip_path) if paper_zip_path else None,
+        ),
         created_at=now,
         updated_at=now,
     )
@@ -131,8 +144,8 @@ def test_paper_adapter_stages_artifacts(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     _write_llm_config(tmp_path)
     _write_image_config(tmp_path)
-    pdf_path = tmp_path / "sample.pdf"
-    _make_pdf(pdf_path)
+    paper_md_path = tmp_path / "paper.md"
+    _make_paper_md(paper_md_path)
     runtime = DockerRuntimeManager()
     monkeypatch.setattr(runtime, "can_use_docker", lambda: True)
     monkeypatch.setattr(runtime, "prepare_image", lambda profile, runtime_profile: "paper-image:test")  # noqa: ARG001
@@ -170,7 +183,7 @@ def test_paper_adapter_stages_artifacts(tmp_path: Path, monkeypatch) -> None:
 
     adapter = PaperDomainAdapter(runtime)
     monkeypatch.setattr(adapter, "_run_real_loop", fake_run_real_loop)
-    result = adapter.run(_paper_job(tmp_path, pdf_path))
+    result = adapter.run(_paper_job(tmp_path, paper_md_path))
     assert result["validation_report"].status == "skipped"
     artifact_types = {item.artifact_type for item in result["artifacts"]}
     assert "paper_analysis" in artifact_types
@@ -180,10 +193,47 @@ def test_paper_adapter_stages_artifacts(tmp_path: Path, monkeypatch) -> None:
     assert "sandbox_session" in artifact_types
     assert "self_check_report" in artifact_types
     job_paths = ensure_job_dirs(resolve_job_paths("paper-job"))
+    assert (job_paths.workspace_dir / "paper" / "paper.md").exists()
     assert (job_paths.workspace_dir / "submission" / "reproduce.sh").exists()
     assert (job_paths.workspace_dir / "agent" / "paper_analysis" / "summary.md").exists()
     assert (job_paths.state_dir / "capabilities.json").exists()
     assert (job_paths.workspace_dir / "agent" / "final_self_check.md").exists()
+
+
+def test_paper_adapter_extracts_primary_zip_into_paper_workspace(tmp_path: Path) -> None:
+    bundle_path = tmp_path / "paper_bundle.zip"
+    _make_paper_zip(bundle_path)
+    job_paths = SimpleNamespace(input_dir=tmp_path / "input", workspace_dir=tmp_path / "workspace")
+    job_paths.input_dir.mkdir(parents=True, exist_ok=True)
+    job_paths.workspace_dir.mkdir(parents=True, exist_ok=True)
+    adapter = PaperDomainAdapter(DockerRuntimeManager())
+
+    adapter._stage_inputs(PaperSpec(paper_zip_path=str(bundle_path)), job_paths)
+
+    assert (job_paths.input_dir / "paper.zip").exists()
+    assert (job_paths.workspace_dir / "paper" / "paper.md").exists()
+    assert (job_paths.workspace_dir / "paper" / "notes" / "context.txt").exists()
+
+
+def test_paper_adapter_rejects_legacy_read_only_jobs(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AISCI_REPO_ROOT", str(tmp_path))
+    now = __import__("datetime").datetime.now().astimezone()
+    job = JobRecord(
+        id="legacy-paper-job",
+        job_type=JobType.PAPER,
+        status=JobStatus.PENDING,
+        phase=RunPhase.INGEST,
+        objective="legacy paper objective",
+        llm_profile="paper-default",
+        runtime_profile=RuntimeProfile(workspace_layout=WorkspaceLayout.PAPER),
+        mode_spec=PaperSpec(pdf_path="/tmp/paper.pdf"),
+        created_at=now,
+        updated_at=now,
+    )
+    adapter = PaperDomainAdapter(DockerRuntimeManager())
+
+    with pytest.raises(RuntimeError, match="deprecated inputs \\(pdf_path\\)"):
+        adapter.run(job)
 
 
 def test_default_paper_profile_uses_repo_image_config(tmp_path: Path, monkeypatch) -> None:
@@ -222,8 +272,8 @@ def test_paper_adapter_reuses_same_image_for_main_and_validation(tmp_path: Path,
     monkeypatch.setenv("HF_TOKEN", "hf_test_token")
     _write_llm_config(tmp_path)
     _write_image_config(tmp_path)
-    pdf_path = tmp_path / "sample.pdf"
-    _make_pdf(pdf_path)
+    paper_md_path = tmp_path / "paper.md"
+    _make_paper_md(paper_md_path)
 
     runtime = DockerRuntimeManager()
     monkeypatch.setattr(runtime, "can_use_docker", lambda: True)
@@ -274,7 +324,7 @@ def test_paper_adapter_reuses_same_image_for_main_and_validation(tmp_path: Path,
             (job_paths.state_dir / "resolved_llm_config.json").write_text("{}", encoding="utf-8"),
         ),
     )
-    result = adapter.run(_paper_job(tmp_path, pdf_path, run_final_validation=True))
+    result = adapter.run(_paper_job(tmp_path, paper_md_path, run_final_validation=True))
 
     assert result["validation_report"].status == "passed"
     assert result["validation_report"].container_image == "paper-image:123"
@@ -303,15 +353,15 @@ def test_paper_adapter_only_forwards_optional_runtime_envs_when_present(tmp_path
     monkeypatch.setenv("HF_TOKEN", "hf_secondary")
     _write_llm_config(tmp_path)
     _write_image_config(tmp_path)
-    pdf_path = tmp_path / "sample.pdf"
-    _make_pdf(pdf_path)
+    paper_md_path = tmp_path / "paper.md"
+    _make_paper_md(paper_md_path)
     adapter = PaperDomainAdapter(DockerRuntimeManager())
 
-    forwarded = adapter._sandbox_env(_paper_job(tmp_path, pdf_path))
+    forwarded = adapter._sandbox_env(_paper_job(tmp_path, paper_md_path))
 
     assert forwarded["AISCI_JOB_ID"] == "paper-job"
     assert forwarded["AISCI_OBJECTIVE"] == "paper objective"
-    assert forwarded["LOGS_DIR"] == "/home/logs"
+    assert forwarded["LOGS_DIR"] == "/workspace/logs"
     assert forwarded["HTTPS_PROXY"] == "http://proxy.example:3128"
     assert forwarded["HF_TOKEN"] == "hf_secondary"
     assert "HTTP_PROXY" not in forwarded
@@ -322,14 +372,14 @@ def test_paper_adapter_requires_docker(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     _write_llm_config(tmp_path)
     _write_image_config(tmp_path)
-    pdf_path = tmp_path / "sample.pdf"
-    _make_pdf(pdf_path)
+    paper_md_path = tmp_path / "paper.md"
+    _make_paper_md(paper_md_path)
     runtime = DockerRuntimeManager()
     monkeypatch.setattr(runtime, "can_use_docker", lambda: False)
     adapter = PaperDomainAdapter(runtime)
 
     try:
-        adapter.run(_paper_job(tmp_path, pdf_path))
+        adapter.run(_paper_job(tmp_path, paper_md_path))
     except DockerRuntimeError as exc:
         assert "No local fallback loop is available" in str(exc)
     else:
@@ -429,6 +479,27 @@ def test_runtime_session_spec_uses_canonical_mounts(tmp_path: Path, monkeypatch)
     assert "/home/logs" in targets
     assert "/workspace/logs" in targets
     assert spec.workdir == "/home/code"
+
+
+def test_runtime_session_spec_uses_paper_mounts_without_home_logs(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AISCI_REPO_ROOT", str(tmp_path))
+    _write_image_config(tmp_path)
+    runtime = DockerRuntimeManager()
+    job_paths = ensure_job_dirs(resolve_job_paths("paper-layout-job"))
+    runtime.ensure_layout(job_paths, WorkspaceLayout.PAPER)
+    spec = runtime.create_session_spec(
+        "paper-layout-job",
+        job_paths,
+        default_paper_profile(),
+        RuntimeProfile(workspace_layout=WorkspaceLayout.PAPER),
+        layout=WorkspaceLayout.PAPER,
+        workdir="/home/submission",
+    )
+    targets = {mount.target for mount in spec.mounts}
+    assert "/home" in targets
+    assert "/workspace/logs" in targets
+    assert "/home/logs" not in targets
+    assert spec.workdir == "/home/submission"
 
 
 def test_runtime_session_spec_accepts_extra_mounts(tmp_path: Path, monkeypatch) -> None:

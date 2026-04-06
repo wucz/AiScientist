@@ -21,7 +21,7 @@ from aisci_domain_paper.configs import (
 from aisci_domain_paper.engine import EmbeddedPaperEngine, PaperRuntimeConfig
 from aisci_domain_paper.subagents import subagent_class_for_kind
 from aisci_domain_paper.subagents.coordinator import SubagentCoordinator, SubagentTask
-from aisci_domain_paper.subagents.paper_reader import PaperReaderCoordinator
+from aisci_domain_paper.subagents.paper_reader import PaperReaderCoordinator, SynthesisSubagent
 from aisci_domain_paper.subagents.prioritization import PaperPrioritizationSubagent, PrioritizationRunner
 from aisci_domain_paper.state_manager import PaperStateManager
 from aisci_domain_paper.tools.basic_tool import (
@@ -130,6 +130,8 @@ def test_generic_subagent_tool_permissions_are_split() -> None:
     general = {tool.name() for tool in build_general_tools({"online_research": {"available": True}})}
     implementation = {tool.name() for tool in build_implementation_tools({"online_research": {"available": True}})}
     reader = {tool.name() for tool in build_reader_tools({"online_research": {"available": True}})}
+    env_setup = {tool.name() for tool in build_env_setup_tools()}
+    resource_download = {tool.name() for tool in build_resource_download_tools({"online_research": {"available": True}})}
 
     assert "edit_file" not in explore
     assert "write_plan" in plan
@@ -137,12 +139,37 @@ def test_generic_subagent_tool_permissions_are_split() -> None:
     assert "python" in general
     assert "github" not in implementation
     assert "linter" in implementation
+    assert "edit_file" not in env_setup
+    assert "python" not in resource_download
+    assert "edit_file" not in resource_download
+    assert "web_search" not in resource_download
+    assert "link_summary" not in resource_download
     main_direct = {tool.name() for tool in build_main_direct_tools({"online_research": {"available": True}})}
     assert {"web_search", "link_summary"} <= main_direct
     assert "python" not in reader
     assert reader >= {"read_file_chunk", "search_file", "bash", "subagent_complete"}
     prioritization = {tool.name() for tool in build_prioritization_tools({"online_research": {"available": True}})}
     assert prioritization == {"read_file_chunk", "search_file", "parse_rubric", "write_priorities", "subagent_complete"}
+
+
+def test_synthesis_reader_tool_surface_matches_upstream() -> None:
+    class Engine:
+        def _capabilities(self) -> dict[str, dict[str, bool]]:
+            return {"online_research": {"available": True}}
+
+        def constraints(self) -> dict[str, list[str]]:
+            return {"blacklist": []}
+
+    subagent = SynthesisSubagent(
+        Engine(),
+        shell=object(),
+        llm=object(),
+        config=DEFAULT_PAPER_SYNTHESIS_CONFIG,
+        objective="Summarize the paper analysis.",
+    )
+    tool_names = {tool.name() for tool in subagent.get_tools()}
+
+    assert tool_names == {"read_file_chunk", "search_file", "subagent_complete"}
 
 
 def test_validation_subagent_kind_is_not_exposed() -> None:

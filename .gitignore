@@ -4,6 +4,8 @@
 .env.local
 .pytest_cache/
 .aisci/
+.codex
 jobs/
+examples/output/
 __pycache__/
 *.pyc

@@ -31,7 +31,6 @@ class PaperSubagent(Subagent):
             "- /home/paper contains paper inputs",
             "- /home/submission is the implementation repository",
             "- /home/agent contains durable agent artifacts",
-            "- /home/logs contains main and subagent traces",
         ]
         if self.context.strip():
             parts.extend(["", "Additional context:", self.context.strip()])

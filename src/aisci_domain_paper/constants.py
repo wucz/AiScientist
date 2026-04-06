@@ -9,7 +9,6 @@ MAIN_AGENT_WORKSPACE_REFERENCE = """## Workspace Reference
 | Path | Content |
 |------|---------|
 | `/home/paper/paper.md` | Research paper in markdown form |
-| `/home/paper/paper.pdf` | Original paper PDF |
 | `/home/paper/rubric.json` | Optional rubric or scope hints |
 | `/home/paper/addendum.md` | Scope clarifications and constraints |
 | `/home/paper/blacklist.txt` | Blocked resources that must not be used |
@@ -21,7 +20,6 @@ MAIN_AGENT_WORKSPACE_REFERENCE = """## Workspace Reference
 | `/home/agent/impl_log.md` | Implementation changelog created on first implementation write |
 | `/home/agent/exp_log.md` | Experiment log created on first experiment write |
 | `/home/agent/experiments/` | Experiment command logs created by experiment runs |
-| `/home/logs/subagent_logs/` | Subagent trace directories created when subagents run |
 """
 
 
@@ -30,7 +28,6 @@ IMPLEMENTATION_WORKSPACE_REFERENCE = """## Workspace Reference
 | Path | Content | Availability |
 |------|---------|--------------|
 | `/home/paper/paper.md` | Research paper in markdown form | Always |
-| `/home/paper/paper.pdf` | Original paper PDF | Always |
 | `/home/paper/rubric.json` | Optional rubric or scope hints | Always |
 | `/home/paper/addendum.md` | Scope clarifications and constraints | Always |
 | `/home/paper/blacklist.txt` | Blocked resources that must not be used | Always |
@@ -50,7 +47,6 @@ EXPERIMENT_WORKSPACE_REFERENCE = """## Workspace Reference
 | Path | Content | Availability |
 |------|---------|--------------|
 | `/home/paper/paper.md` | Research paper in markdown form | Always |
-| `/home/paper/paper.pdf` | Original paper PDF | Always |
 | `/home/paper/rubric.json` | Optional rubric or scope hints | Always |
 | `/home/paper/addendum.md` | Scope clarifications and constraints | Always |
 | `/home/paper/blacklist.txt` | Blocked resources that must not be used | Always |
@@ -70,7 +66,6 @@ SUBAGENT_WORKSPACE_REFERENCE = """## Workspace Reference
 | Path | Content | Availability |
 |------|---------|--------------|
 | `/home/paper/paper.md` | Research paper in markdown form | Always |
-| `/home/paper/paper.pdf` | Original paper PDF | Always |
 | `/home/paper/rubric.json` | Optional rubric or scope hints | Always |
 | `/home/paper/addendum.md` | Scope clarifications and constraints | Always |
 | `/home/paper/blacklist.txt` | Blocked resources that must not be used | Always |

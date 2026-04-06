@@ -1,375 +1,326 @@
-# AiScientist
+<p align="center">
+  <img src="assets/readme/logo.svg" alt="AiScientist logo" width="104" />
+</p>
 
-Independent AI Scientist workbench for `paper` and `mle` jobs.
+<h1 align="center">AiScientist: A File-as-Bus Research Lab</h1>
+
+<p align="center">
+  Automate paper reproduction and Kaggle-style MLE competitions with one host-side console,<br />
+  Docker sandboxes, durable workspace artifacts, and job state you can actually inspect.
+</p>
+
+<p align="center">
+  <a href="#quick-start"><img src="https://img.shields.io/badge/Quick_Start-Local_Setup-0F766E?style=for-the-badge" alt="Quick Start" /></a>
+  <a href="#paper-track"><img src="https://img.shields.io/badge/Paper-Reproduce_Papers-D86A42?style=for-the-badge" alt="Paper Track" /></a>
+  <a href="#mle-track"><img src="https://img.shields.io/badge/MLE-Solve_Competitions-F59E0B?style=for-the-badge" alt="MLE Track" /></a>
+  <a href="#what-lands-on-disk"><img src="https://img.shields.io/badge/Inspectability-Files_%2B_Artifacts-10233F?style=for-the-badge" alt="Inspectability" /></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+" />
+  <img src="https://img.shields.io/badge/runtime-Docker-2496ED?logo=docker&logoColor=white" alt="Docker runtime" />
+  <img src="https://img.shields.io/badge/interface-CLI%20%2B%20TUI-0F766E" alt="CLI and TUI" />
+  <img src="https://img.shields.io/badge/domains-Paper%20%2B%20MLE-C2410C" alt="Paper and MLE" />
+  <img src="https://img.shields.io/badge/orchestration-File--as--Bus-111827" alt="File-as-bus orchestration" />
+</p>
+
+<p align="center">
+  <img src="assets/readme/overview.svg" alt="AiScientist overview" />
+</p>
+
+> AiScientist is built for people who want the agent to leave a lab notebook behind, not just a final answer.
+
+AiScientist is a dual-domain research automation framework with one shared control plane:
+
+- `paper`: reproduce a paper from `paper.md` or a bundle, then keep the analysis, priorities, implementation log, experiment log, and final self-check.
+- `mle`: solve a Kaggle-style competition from a zip, cached dataset, or prepared data directory, then keep candidate history, submission state, and validation artifacts.
+
+The "file-as-bus" part is literal. Agents coordinate through durable workspace files such as `prioritized_tasks.md`, `impl_log.md`, `exp_log.md`, `submission_registry.jsonl`, and validation reports instead of hiding all state in transient prompts.
+
+## One-Line Setup for Coding Agents
+
+If you use Codex, Claude Code, or another coding agent, you can hand it this prompt:
+
+```text
+Help me clone AiScientist, adapt the Dockerfiles if this machine cannot use the current base images, fill .env from .env.example, build the paper and mle images, run doctor for both modes, and then launch either a paper or mle job.
+```
+
+## Why It Feels Different
+
+<table>
+<tr>
+<td width="25%" valign="top">
+
+### Two real workflows
+
+One repo, one CLI, two specialized engines: paper reproduction and competition-style MLE.
+
+</td>
+<td width="25%" valign="top">
+
+### File-native coordination
+
+Planning, implementation, experiments, and candidate selection all leave durable files behind.
+
+</td>
+<td width="25%" valign="top">
+
+### Inspectable runs
+
+Every job records logs, conversation traces, sandbox metadata, artifacts, and an export bundle.
+
+</td>
+<td width="25%" valign="top">
+
+### Operator control
+
+Choose LLM profiles, image refs, GPU binding, time limits, output roots, and validation behavior explicitly.
+
+</td>
+</tr>
+</table>
+
+## Two Tracks
+
+| Track | Primary inputs | Working outputs | Validation endpoint |
+| --- | --- | --- | --- |
+| `paper` | `--paper-md`, `--zip` | paper analysis notes, prioritized task list, implementation log, experiment log, self-check artifacts | final self-check plus `validation_report.json` |
+| `mle` | `--zip`, `--name`, `--data-dir`, `--workspace-zip`, `--competition-bundle-zip` | dataset analysis, prioritized task list, candidate snapshots, `submission.csv`, `submission_registry.jsonl` | submission-format or grading validation |
+
+The domain implementations live in [`src/aisci_domain_paper`](src/aisci_domain_paper) and [`src/aisci_domain_mle`](src/aisci_domain_mle). Shared host infrastructure lives in [`src/aisci_app`](src/aisci_app), [`src/aisci_core`](src/aisci_core), and [`src/aisci_runtime_docker`](src/aisci_runtime_docker).
 
 ## Quick Start
 
-```bash
-uv sync
-uv run aisci --help
-./.venv/bin/aisci --help
-uv run aisci tui
-```
+> [!IMPORTANT]
+> The current Dockerfiles are tuned for our operator environment. Both [`docker/paper-agent.Dockerfile`](docker/paper-agent.Dockerfile) and [`docker/mle-agent.Dockerfile`](docker/mle-agent.Dockerfile) reference internal Ubuntu images and package mirrors. If you are outside that environment, replace those base-image and mirror lines before the first build.
 
-## Runtime Config File
+> [!TIP]
+> The shipped LLM defaults are not symmetric: `paper=glm-5`, `mle=gpt-5.4` in [`config/llm_profiles.yaml`](config/llm_profiles.yaml). If you only have `OPENAI_API_KEY`, run paper commands with `--llm-profile gpt-5.4` and use `AISCI_PAPER_DOCTOR_PROFILE=gpt-5.4` for `paper doctor`, or update the default profile locally.
 
-The CLI now auto-loads environment variables from the first matching files it
-finds in the repo root or current directory:
-
-- `.env`
-- `.env.aisci`
-- `.env.local`
-
-Use `.env.example` as the template, then run the CLI directly without an extra wrapper script.
-
-`scripts/run_paper_job.sh` remains available, but it is only a thin wrapper over `aisci paper run --wait`.
-
-Recommended mental model:
-
-- `AISCI_OUTPUT_ROOT`: where runtime outputs go, including `jobs/`, `export/`, and `.aisci/`
-- `AISCI_REPO_ROOT`: where the AiScientist repo itself lives, used to find `config/` and `src/`
-
-Most users only need `AISCI_OUTPUT_ROOT`. `AISCI_REPO_ROOT` is usually unnecessary unless you launch the installed CLI from outside the repo and the process cannot infer where the checked-out AiScientist source tree is.
-
-LLM selection is driven by a YAML registry rather than hardcoded string parsing.
-The default registry lives at `config/llm_profiles.yaml` in the repo root.
-Users are expected to edit that top-level `config/` file directly rather than touching `src/...` internals.
-If you want to maintain your own profile set, point `AISCI_LLM_PROFILE_FILE` at a custom YAML file.
-
-Sandbox runtime image selection is also driven by a YAML registry.
-The default registry lives at `config/image_profiles.yaml` in the repo root.
-If you want to maintain your own image profile set, point `AISCI_IMAGE_PROFILE_FILE` at a custom YAML file.
-The checked-in default `paper` profile assumes a locally prebuilt `aisci-paper:latest` image.
-The local MLE build helper currently produces `aisci-mle:test`.
-
-You can also point to a custom file explicitly:
+### 1. Configure the host
 
 ```bash
-./.venv/bin/aisci --env-file /abs/path/to/paper.env paper doctor
-```
+git clone <your-fork-or-origin-url> AiScientist
+cd AiScientist
 
-## Paper Mode Prerequisites
-
-`paper` jobs will not start unless all of the following are true:
-
-- Python `>=3.12`
-- Docker daemon is reachable from the host
-- the selected `--llm-profile` has all required backend env vars set in the host environment
-
-Optional but recommended:
-
-- `AISCI_OUTPUT_ROOT`: override where jobs, exports, and `.aisci/` state are written
-- `AISCI_LLM_PROFILE_FILE`: optional override for the LLM profile registry YAML
-- `AISCI_MAX_STEPS`: overrides the default paper loop step budget (`80`)
-- `AISCI_REMINDER_FREQ`: overrides the default reminder interval (`5`)
-- `AISCI_IMAGE_PROFILE_FILE`: optional override for the runtime image profile YAML
-- `AISCI_REPO_ROOT`: advanced override for locating repo-local assets such as `config/` and `src/`
-
-Sanity-check the local environment before running:
-
-```bash
-uv run aisci paper doctor
-./.venv/bin/aisci paper doctor
-```
-
-## Paper Job Runtime Model
-
-Current `paper` runs use a host-agent + Docker-sandbox split:
-
-- The `aisci` worker process on the host runs the main agent loop and all subagents.
-- A persistent Docker container is started as the code-execution sandbox.
-- The host agent talks to that sandbox through shell/file operations.
-- Final validation, if enabled, starts a fresh container from the same image and runs `bash reproduce.sh`.
-- `src/aisci_domain_paper/orchestrator.py` is no longer the paper runtime entrypoint.
-
-The sandbox still uses these canonical paths:
-
-- `/home/paper`: staged paper inputs
-- `/home/submission`: working repo and final `reproduce.sh`
-- `/home/agent`: analysis and planning artifacts
-- `/home/logs`: agent/runtime logs
-
-This means:
-
-- LLM keys stay on the host.
-- `config/llm_profiles.yaml` is only read on the host.
-- Docker only needs to execute commands and hold the isolated workspace.
-- The run records both `workspace/agent/resolved_llm_config.json` and `state/sandbox_session.json` for debugging.
-
-## Paper CLI
-
-The main entrypoint is:
-
-```bash
-uv run aisci paper run [OPTIONS]
-./.venv/bin/aisci paper run [OPTIONS]
-```
-
-At least one of the following inputs must be provided:
-
-- `--pdf PATH`: path to a paper PDF
-- `--paper-bundle-zip PATH`: zip extracted into `/home/paper`
-- `--paper-md PATH`: markdown copy of the paper
-
-Other `paper run` options exposed by the current CLI:
-
-- `--llm-profile TEXT`: profile key from the YAML registry; if omitted, the registry's `defaults.paper` value is used
-- `--gpus INT`: default `0`
-- `--time-limit TEXT`: default `24h`; parsed from units like `30m`, `8h`, `1d12h`
-- `--inputs-zip PATH`: extra context bundle extracted into `/home/paper`
-- `--rubric-path PATH`: copied to `/home/paper/rubric.json`
-- `--blacklist-path PATH`: copied to `/home/paper/blacklist.txt`
-- `--addendum-path PATH`: copied to `/home/paper/addendum.md`
-- `--submission-seed-repo-zip PATH`: extracted into `/home/submission`
-- `--image TEXT`: Docker image ref for the sandbox runtime
-- `--pull-policy TEXT`: one of `if-missing`, `always`, or `never`; if omitted, the selected image profile decides
-- `--supporting-materials PATH`: repeatable option; each file is copied into `/home/paper`
-- `--run-final-validation` / `--skip-final-validation`: default is enabled
-- `--detach` / `--wait`: default is detached
-- `--tui`: attach the live terminal dashboard; requires `--wait`
-
-Current `paper run` CLI defaults that are not user-configurable from the CLI:
-
-- `objective="paper reproduction job"`
-- `enable_online_research=True`
-
-If you need to change those values today, construct the `JobSpec` in Python.
-
-## Recommended Paper Usage
-
-Minimal run with a PDF:
-
-```bash
 cp .env.example .env
-# edit .env and fill OPENAI_API_KEY or AZURE_OPENAI_API_KEY
+# Fill either OpenAI or Azure OpenAI credentials.
 
-./docker/build_paper_image.sh
+uv sync --dev
+```
 
-./.venv/bin/aisci paper run \
-  --pdf /abs/path/to/paper.pdf \
+Host-side requirements:
+
+- Python 3.12+
+- Docker with a reachable daemon
+- `uv`
+- API credentials for at least one configured LLM backend
+- Optional NVIDIA GPUs if you want GPU-bound runs
+
+### 2. Build the default runtime images
+
+If you are not supplying your own runtime images, these are the intended defaults:
+
+```bash
+bash docker/build_paper_image.sh
+bash docker/build_mle_image.sh
+```
+
+The public quick starts below use the locally built tags directly:
+
+- `aisci-paper:latest`
+- `aisci-mle:test`
+
+That avoids relying on profile defaults you may want to change later.
+
+### 3. Run the built-in health checks
+
+```bash
+AISCI_PAPER_DOCTOR_PROFILE=gpt-5.4 uv run aisci paper doctor
+uv run aisci mle doctor
+```
+
+If you use the shipped Azure-backed `glm-5` paper profile, you can drop the `AISCI_PAPER_DOCTOR_PROFILE` override.
+
+## Paper Track
+
+Canonical Markdown-first paper reproduction flow:
+
+```bash
+uv run aisci --env-file .env paper run \
+  --paper-md /abs/path/to/paper.md \
+  --image aisci-paper:latest \
+  --llm-profile gpt-5.4 \
+  --gpu-ids 0 \
+  --time-limit 24h \
   --wait \
   --tui
 ```
 
-A more complete run with staged context:
+Other paper entrypoints:
+
+- `--zip /abs/path/to/paper_bundle_or_context.zip`
+- `--submission-seed-repo-zip /abs/path/to/starter_repo.zip`
+- `--supporting-materials /abs/path/to/extra_note.md`
+
+Paper zip note:
+
+- `paper run` accepts one primary `--zip`; if you previously staged multiple archives into `/home/paper`, combine them locally before launching the job.
+
+Expected paper outputs:
+
+- `workspace/agent/paper_analysis/summary.md`
+- `workspace/agent/paper_analysis/structure.md`
+- `workspace/agent/prioritized_tasks.md`
+- `workspace/agent/impl_log.md`
+- `workspace/agent/exp_log.md`
+- `workspace/agent/final_self_check.md`
+- `artifacts/validation_report.json`
+- `export/<job_id>.zip`
+
+## MLE Track
+
+Canonical self-contained MLE flow with a local competition zip:
 
 ```bash
-./.venv/bin/aisci paper run \
-  --pdf /abs/path/to/paper.pdf \
-  --inputs-zip /abs/path/to/context_bundle.zip \
-  --rubric-path /abs/path/to/rubric.json \
-  --addendum-path /abs/path/to/addendum.md \
-  --submission-seed-repo-zip /abs/path/to/seed_repo.zip \
-  --supporting-materials /abs/path/to/notes.md \
-  --supporting-materials /abs/path/to/diagram.png \
-  --time-limit 12h \
+uv run aisci --env-file .env mle run \
+  --zip /abs/path/to/detecting-insults-in-social-commentary.zip \
+  --name detecting-insults-in-social-commentary \
+  --image aisci-mle:test \
   --llm-profile gpt-5.4 \
-  --pull-policy if-missing \
-  --wait
+  --gpu-ids 0 \
+  --time-limit 12h \
+  --wait \
+  --tui
 ```
 
-If `--image` is omitted, `aisci` resolves the default runtime image from `config/image_profiles.yaml`.
-The checked-in default points to `aisci-paper:latest`, which is what `docker/build_paper_image.sh` produces.
-If you publish your sandbox image to a registry, either pass `--image <registry-ref>` directly or update `config/image_profiles.yaml`.
+Input selection notes:
 
-## LLM Profiles
+- Prefer `--zip` for an offline, self-contained entrypoint.
+- Use `--name` alone when you already have a prepared MLE-Bench cache.
+- Use `--data-dir`, `--workspace-zip`, or `--competition-bundle-zip` for operator or migration flows.
+- `--name` is the canonical competition slug used for prepared-cache lookup, runtime planning, and grading metadata.
+- If the zip stem and competition slug differ, keep `--name` explicit so the run keeps the correct registry id.
 
-The default registry schema is:
+Expected MLE outputs:
 
-```yaml
-defaults:
-  paper: gpt-5.4
-  mle: gpt-5.4
+- `workspace/agent/analysis/summary.md`
+- `workspace/agent/prioritized_tasks.md`
+- `workspace/agent/impl_log.md`
+- `workspace/agent/exp_log.md`
+- `workspace/submission/submission.csv`
+- `workspace/submission/submission_registry.jsonl`
+- `artifacts/validation_report.json` when final validation is enabled
+- `export/<job_id>.zip`
 
-backends:
-  openai:
-    type: openai
-    env:
-      api_key:
-        var: OPENAI_API_KEY
-        required: true
-      base_url:
-        var: OPENAI_BASE_URL
-  azure-openai:
-    type: azure-openai
-    env:
-      endpoint:
-        var: AZURE_OPENAI_ENDPOINT
-        required: true
-      api_key:
-        var: AZURE_OPENAI_API_KEY
-        required: true
-      api_version:
-        var: OPENAI_API_VERSION
-        required: true
+## What Lands On Disk
 
-profiles:
-  gpt-5.4:
-    backend: openai
-    model: gpt-5.4
-    api: responses
-    limits:
-      max_completion_tokens: 131072
-      context_window: 1000000
-    features:
-      use_phase: true
+Every run gets a concrete workspace under `jobs/<job_id>/`:
 
-  glm-5:
-    backend: azure-openai
-    model: glm-5
-    api: completions
-    limits:
-      max_completion_tokens: 65536
-      context_window: 202752
-    features:
-      clear_thinking: true
+```text
+jobs/<job_id>/
+├── input/
+├── workspace/
+│   ├── paper/ or data/
+│   ├── code/               # MLE
+│   ├── submission/
+│   └── agent/
+├── logs/
+├── artifacts/
+├── export/
+└── state/
 ```
 
-Here `context_window` means the model's maximum context window. The runtime
-derives its internal prune budget automatically; users do not need to configure
-that separately.
+The files inside that tree are the bus:
 
-Current provider backends supported by the code are:
+- planning becomes `prioritized_tasks.md`
+- implementation and experiments become `impl_log.md` and `exp_log.md`
+- MLE candidate history becomes `submission_registry.jsonl`
+- paper self-check becomes `final_self_check.md` and `final_self_check.json`
+- runtime metadata becomes `sandbox_session.json` and `resolved_llm_config.json`
 
-- `openai`
-- `azure-openai`
+That makes runs easier to inspect, resume, diff, export, and audit after the model has already moved on.
 
-Current API modes supported by the code are:
+## How It Works
 
-- `responses`
-- `completions`
+1. The host CLI resolves env vars, LLM profiles, image refs, runtime options, and job state paths.
+2. AiScientist stages a job workspace under `jobs/<job_id>/`.
+3. A Docker sandbox starts with the workspace mounted into canonical paths under `/home`.
+4. The domain engine runs, and subagents coordinate through durable files in the workspace.
+5. Validation artifacts, logs, and an export bundle are written back to the job directory.
 
-For the default repo config, the only built-in model choices are:
+## Operate And Inspect
 
-- `gpt-5.4`
-- `glm-5`
-
-If you prefer background execution:
-
-```bash
-./.venv/bin/aisci paper run --pdf /abs/path/to/paper.pdf
-```
-
-Detached mode returns JSON containing the new `job_id`. Use that `job_id` for inspection commands below.
-
-## Inspecting Runs
-
-List jobs:
+Core job inspection commands:
 
 ```bash
 uv run aisci jobs list
-```
-
-Show one job with events and recorded artifacts:
-
-```bash
 uv run aisci jobs show <job_id>
-```
-
-List available logs for a run:
-
-```bash
 uv run aisci logs list <job_id>
-```
-
-Tail logs:
-
-```bash
-uv run aisci logs tail <job_id> --kind main
 uv run aisci logs tail <job_id> --kind conversation
-uv run aisci logs tail <job_id> --kind agent
-uv run aisci logs tail <job_id> --kind subagent
-uv run aisci logs tail <job_id> --kind validation
-uv run aisci logs tail <job_id> --kind all
-```
-
-List recorded artifacts:
-
-```bash
 uv run aisci artifacts ls <job_id>
-```
-
-Export a job bundle:
-
-```bash
 uv run aisci export <job_id>
 ```
 
-Open the terminal dashboard:
+Terminal-native monitoring:
 
 ```bash
 uv run aisci tui
 uv run aisci tui job <job_id>
 ```
 
-## Re-Run Validation Or Resume
-
-Start a fresh self-check job from an existing paper run:
+Lifecycle helpers:
 
 ```bash
 uv run aisci paper validate <job_id> --wait
-```
-
-Resume from an existing paper job spec:
-
-```bash
 uv run aisci paper resume <job_id> --wait
+uv run aisci mle validate <job_id> --wait
+uv run aisci mle resume <job_id> --wait
 ```
 
-## Terminal UI
+## Configuration Surface
 
-The terminal dashboard is the primary visualization surface:
+- [`.env.example`](.env.example): backend credentials, optional proxy variables, optional Hugging Face token, output-root overrides, and doctor flags.
+- [`config/llm_profiles.yaml`](config/llm_profiles.yaml): shared model registry and per-domain defaults.
+- [`config/image_profiles.yaml`](config/image_profiles.yaml): runtime image registry and pull policy defaults.
+- [`config/paper_subagents.yaml`](config/paper_subagents.yaml): paper-mode subagent step budgets and bash timeouts.
 
-```bash
-uv run aisci tui
-uv run aisci tui job <job_id>
-uv run aisci paper run --pdf /abs/path/to/paper.pdf --wait --tui
+Useful host-side knobs:
+
+- `--env-file /path/to/.env`
+- `--output-root /abs/path/to/runtime_root`
+- `--llm-profile-file /abs/path/to/llm_profiles.yaml`
+- `--image-profile-file /abs/path/to/image_profiles.yaml`
+- `--gpu-ids 0,1` or `--gpus 2`
+
+## Example Scripts
+
+Operator examples already live in the repo:
+
+- [`examples/paper/example_run_paper_md.sh`](examples/paper/example_run_paper_md.sh)
+- [`examples/mle/example_run_mle.sh`](examples/mle/example_run_mle.sh)
+
+The paper example uses the Markdown-first path, and the MLE example vendors a real local sample zip under `examples/mle/`.
+
+## Repo Map
+
+```text
+config/                   shared LLM, image, and paper-subagent registries
+docker/                   default paper and MLE runtime image recipes
+examples/                 operator examples and sample assets
+src/aisci_app/            CLI, job service, presentation, TUI
+src/aisci_core/           job models, paths, store, exporter, runner
+src/aisci_runtime_docker/ Docker session manager and image profile resolver
+src/aisci_domain_paper/   paper reproduction workflow
+src/aisci_domain_mle/     Kaggle-style competition workflow
+tests/                    host-side regression tests
 ```
 
-Current TUI coverage:
+## Current Caveats
 
-- Jobs overview with live status, phase, latest event, and checks
-- Single-job detail view for overview, events, logs, and results
-- Dynamic GPU telemetry for jobs launched with `--gpu-ids`
-- Small animated scientist mascot that tracks the selected job state
+- The control plane is generic Python plus Docker orchestration, but the bundled image recipes still carry internal infrastructure assumptions.
+- The default paper image path is local-first after you build `aisci-paper:latest`.
+- The current shared MLE image profile is remote-first, so public quick starts should pass `--image aisci-mle:test` explicitly or update [`config/image_profiles.yaml`](config/image_profiles.yaml).
+- Job state lives under the repo root by default. Use `AISCI_OUTPUT_ROOT` or `--output-root` if you want `jobs/` and `.aisci/` somewhere else.
 
-## Output Layout
-
-Each run writes under `${AISCI_OUTPUT_ROOT:-<repo_root>}/jobs/<job_id>/`:
-
-- `input/`: copied raw inputs
-- `workspace/paper/`: staged paper materials
-- `workspace/submission/`: working repo and final `reproduce.sh`
-- `workspace/agent/`: summaries, plans, logs, self-check outputs
-- `logs/`: job log, agent log, conversation log, subagent logs
-- `artifacts/`: persisted `validation_report.json` and exported bundle metadata
-- `export/`: zip bundle for the run
-
-Useful files to inspect first for `paper` runs:
-
-- `jobs/<job_id>/workspace/agent/paper_analysis/summary.md`
-- `jobs/<job_id>/workspace/agent/prioritized_tasks.md`
-- `jobs/<job_id>/workspace/submission/reproduce.sh`
-- `jobs/<job_id>/workspace/agent/final_self_check.md`
-- `jobs/<job_id>/logs/agent.log`
-
-## What v1 Implements
-
-- Unified SQLite-backed job store and filesystem layout under `jobs/<job_id>/`
-- Shared Docker runtime API with per-mode default profiles
-- Upstream-aligned `paper` AI Scientist loop: `read_paper -> prioritize_tasks -> implement -> run_experiment -> clean_reproduce_validation -> submit`
-- `mle` job staging adapter with prompt-pack artifacts and validation plumbing
-- CLI commands and a terminal dashboard for jobs, details, artifacts, and export
-
-The paper mode now carries the default upstream AI Scientist execution path from
-`paperbench`. Experimental or unhooked upstream modules are intentionally not
-part of the alignment target. The `mle` mode remains focused on staging,
-artifact generation, and runtime unification rather than a full upstream loop.
-
-## Layout
-
-- `src/aisci_core`: shared models, job store, worker, export
-- `src/aisci_runtime_docker`: unified Docker runtime API
-- `src/aisci_domain_paper`: paper-mode staging and validation
-- `src/aisci_domain_mle`: mle-mode staging and validation
-- `src/aisci_app`: CLI and terminal UI
+AiScientist is opinionated enough to run real work, but still transparent enough that you can inspect every file the lab leaves behind.

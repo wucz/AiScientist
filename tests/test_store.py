@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
+
+import pytest
 
 from aisci_core.models import JobSpec, JobStatus, JobType, MLESpec, PaperSpec, RuntimeProfile, RunPhase
 from aisci_core.paths import database_path, ensure_job_dirs, jobs_root, repo_root, resolve_job_paths, state_root, var_root
@@ -18,7 +21,7 @@ def test_store_create_list_and_events(tmp_path: Path) -> None:
             objective="paper test",
             llm_profile="paper-default",
             runtime_profile=RuntimeProfile(),
-            mode_spec=PaperSpec(pdf_path="/tmp/paper.pdf"),
+            mode_spec=PaperSpec(paper_md_path="/tmp/paper.md"),
         )
     )
     mle = store.create_job(
@@ -50,7 +53,7 @@ def test_runner_ingests_conversation_jsonl(tmp_path: Path, monkeypatch) -> None:
             objective="paper test",
             llm_profile="paper-default",
             runtime_profile=RuntimeProfile(),
-            mode_spec=PaperSpec(pdf_path="/tmp/paper.pdf"),
+            mode_spec=PaperSpec(paper_md_path="/tmp/paper.md"),
         )
     )
     paths = ensure_job_dirs(resolve_job_paths(job.id))
@@ -102,7 +105,7 @@ def test_store_reconciles_stale_running_jobs(tmp_path: Path, monkeypatch) -> Non
             objective="paper test",
             llm_profile="paper-default",
             runtime_profile=RuntimeProfile(),
-            mode_spec=PaperSpec(pdf_path="/tmp/paper.pdf"),
+            mode_spec=PaperSpec(paper_md_path="/tmp/paper.md"),
         )
     )
     store.mark_running(job.id, 424242)
@@ -120,3 +123,63 @@ def test_store_reconciles_stale_running_jobs(tmp_path: Path, monkeypatch) -> Non
     assert len(stale_events) == 1
     assert stale_events[0].payload["worker_pid"] == 424242
     assert store.list_jobs()[0].status == JobStatus.FAILED
+
+
+def test_legacy_paper_inputs_deserialize_as_read_only_spec() -> None:
+    spec = PaperSpec.model_validate({"pdf_path": "/tmp/paper.pdf"})
+
+    assert spec.pdf_path == "/tmp/paper.pdf"
+    assert spec.uses_legacy_inputs is True
+    assert spec.legacy_input_fields == ("pdf_path",)
+
+
+def test_store_reads_legacy_paper_rows_without_crashing(tmp_path: Path) -> None:
+    store = JobStore(tmp_path / "jobs.db")
+    now = datetime.now().astimezone().isoformat()
+    runtime_profile = RuntimeProfile().model_dump_json()
+    legacy_mode_spec = json.dumps({"pdf_path": "/tmp/paper.pdf"})
+
+    with store.connect() as conn:
+        conn.execute(
+            """
+            insert into jobs (
+                id, job_type, status, phase, objective, llm_profile,
+                runtime_profile_json, mode_spec_json, created_at, updated_at
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-paper-job",
+                JobType.PAPER.value,
+                JobStatus.SUCCEEDED.value,
+                RunPhase.FINALIZE.value,
+                "legacy paper",
+                "paper-default",
+                runtime_profile,
+                legacy_mode_spec,
+                now,
+                now,
+            ),
+        )
+
+    job = store.get_job("legacy-paper-job")
+    listed_jobs = store.list_jobs()
+
+    assert job.mode_spec.pdf_path == "/tmp/paper.pdf"
+    assert job.mode_spec.uses_legacy_inputs is True
+    assert [item.id for item in listed_jobs] == ["legacy-paper-job"]
+
+
+def test_store_rejects_new_legacy_paper_jobs(tmp_path: Path) -> None:
+    store = JobStore(tmp_path / "jobs.db")
+
+    with pytest.raises(ValueError, match="deprecated inputs \\(pdf_path\\)"):
+        store.create_job(
+            JobSpec(
+                job_type=JobType.PAPER,
+                objective="legacy paper",
+                llm_profile="paper-default",
+                runtime_profile=RuntimeProfile(),
+                mode_spec=PaperSpec(pdf_path="/tmp/paper.pdf"),
+            )
+        )

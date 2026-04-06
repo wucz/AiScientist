@@ -429,6 +429,369 @@ class PriorityWriteTool(Tool):
         }
 
 
+class CheckEnvStatusTool(Tool):
+    def name(self) -> str:
+        return "check_env_status"
+
+    def execute(
+        self,
+        shell,
+        check_packages: str = "",
+        **kwargs: Any,  # noqa: ARG002
+    ) -> str:
+        results: list[str] = []
+
+        python_result = shell.send_shell_command("python3 --version 2>&1", timeout=10)
+        results.append(f"Python: {python_result.output.strip()}")
+
+        pip_result = shell.send_shell_command("pip --version 2>&1", timeout=10)
+        results.append(f"Pip: {pip_result.output.strip()}")
+
+        if shell.file_exists("/home/submission/venv"):
+            results.append("Venv: ✅ /home/submission/venv exists")
+            venv_python = shell.send_shell_command("/home/submission/venv/bin/python --version 2>&1", timeout=10)
+            results.append(f"  Venv Python: {venv_python.output.strip()}")
+        else:
+            results.append("Venv: ❌ Not created yet (run: python3 -m venv venv)")
+
+        gpu_result = shell.send_shell_command(
+            "nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>&1 || echo 'No GPU'",
+            timeout=15,
+        )
+        results.append(f"GPU: {gpu_result.output.strip()}")
+
+        if check_packages:
+            results.append("\n## Package Status")
+            for pkg in [p.strip() for p in check_packages.split(",") if p.strip()]:
+                result = shell.send_shell_command(f"pip show {pkg} 2>&1 | head -2 || echo 'Not installed'", timeout=10)
+                output = result.output.strip()
+                if "Not installed" in output or "not found" in output.lower():
+                    results.append(f"- {pkg}: ❌ Not installed")
+                    continue
+                version = "installed"
+                for line in output.splitlines():
+                    if line.startswith("Version:"):
+                        version = line.split(":", 1)[1].strip()
+                        break
+                results.append(f"- {pkg}: ✅ {version}")
+
+        status_path = "/home/agent/env_status.json"
+        results.append("\n## Previous Setup Record")
+        if shell.file_exists(status_path):
+            try:
+                status = json.loads(shell.read_file(status_path))
+            except Exception as exc:  # noqa: BLE001
+                results.append(f"- Failed to parse {status_path}: {exc}")
+            else:
+                installed = status.get("installed_packages", [])
+                results.append(f"- Initialized: {status.get('initialized', False)}")
+                results.append(f"- Packages installed: {len(installed)}")
+                if installed:
+                    results.append(f"- Recent: {', '.join(installed[-5:])}")
+        else:
+            results.append("- No previous setup record found")
+
+        return "\n".join(results)
+
+    def get_tool_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": "check_env_status",
+                "description": "Check Python, pip, venv, GPU, and optionally package installation status.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "check_packages": {
+                            "type": "string",
+                            "description": "Comma-separated list of packages to check.",
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+
+class RecordEnvSetupTool(Tool):
+    def name(self) -> str:
+        return "record_env_setup"
+
+    def execute(
+        self,
+        shell,
+        commands: str,
+        packages: str = "",
+        description: str = "",
+        **kwargs: Any,  # noqa: ARG002
+    ) -> str:
+        shell.send_shell_command("mkdir -p /home/agent /home/submission/scripts", timeout=10)
+
+        status_path = "/home/agent/env_status.json"
+        if shell.file_exists(status_path):
+            try:
+                status = json.loads(shell.read_file(status_path))
+            except Exception:  # noqa: BLE001
+                status = {"initialized": False, "installed_packages": [], "setup_commands": []}
+        else:
+            status = {"initialized": False, "installed_packages": [], "setup_commands": []}
+
+        status["initialized"] = True
+        if packages:
+            pkg_list = [p.strip() for p in packages.split(",") if p.strip()]
+            merged = list(dict.fromkeys([*status.get("installed_packages", []), *pkg_list]))
+            status["installed_packages"] = merged
+
+        cmd_list = [c.strip() for c in commands.splitlines() if c.strip()]
+        status["setup_commands"] = [*status.get("setup_commands", []), *cmd_list]
+        shell.write_file(status_path, json.dumps(status, indent=2))
+
+        script_path = "/home/submission/scripts/setup_env.sh"
+        if shell.file_exists(script_path):
+            existing_content = shell.read_file(script_path)
+        else:
+            existing_content = """#!/bin/bash
+# Environment Setup Script
+# This script is sourced by reproduce.sh
+#
+# IMPORTANT: The reproduction environment does NOT have conda.
+# All Python dependencies must be installed using pip in a venv.
+#
+# NOTE: The grading system may pre-create an empty venv before running
+# reproduce.sh. Always install dependencies unconditionally.
+
+set -e
+
+echo "Setting up environment..."
+
+# Create venv if it does not exist
+if [ ! -d "venv" ] || [ ! -f "venv/bin/activate" ]; then
+    python3 -m venv venv
+fi
+source venv/bin/activate
+
+# Upgrade pip
+pip install --upgrade pip -q
+
+# Always install dependencies (pip skips already-installed packages)
+if [ -f requirements.txt ]; then
+    pip install -r requirements.txt -q
+fi
+
+"""
+
+        block = commands.strip()
+        if description:
+            existing_content += f"\n# {description}\n"
+        existing_content += block + "\n"
+        shell.write_file(script_path, existing_content)
+        shell.send_shell_command(f"chmod +x {script_path}", timeout=10)
+
+        return (
+            "Setup recorded:\n"
+            f"- Commands added to {script_path}\n"
+            f"- Packages tracked: {packages if packages else 'N/A'}\n"
+            f"- Description: {description if description else 'N/A'}\n\n"
+            "ACTION REQUIRED: reproduce.sh must include `source scripts/setup_env.sh` to work in the grading container."
+        )
+
+    def get_tool_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": "record_env_setup",
+                "description": "Record environment setup commands to scripts/setup_env.sh and update env_status.json.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "commands": {
+                            "type": "string",
+                            "description": "Shell commands to record, one per line.",
+                        },
+                        "packages": {
+                            "type": "string",
+                            "description": "Comma-separated list of installed packages.",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Short description of the setup work.",
+                        },
+                    },
+                    "required": ["commands"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+
+class CheckDownloadStatusTool(Tool):
+    def name(self) -> str:
+        return "check_download_status"
+
+    def execute(
+        self,
+        shell,
+        paths: str = "",
+        **kwargs: Any,  # noqa: ARG002
+    ) -> str:
+        results = ["## Download Directories"]
+        common_dirs = [
+            "/home/submission/models",
+            "/home/submission/data",
+            "/home/submission/checkpoints",
+            "/home/agent/downloads",
+        ]
+        for dir_path in common_dirs:
+            if shell.file_exists(dir_path):
+                results.append(f"- {dir_path}: ✅ Exists")
+                count = shell.send_shell_command(f"find {dir_path} -type f 2>/dev/null | wc -l", timeout=15)
+                results.append(f"  Files: {count.output.strip()}")
+            else:
+                results.append(f"- {dir_path}: ❌ Not exists")
+
+        if paths:
+            results.append("\n## Specific Paths")
+            for path in [p.strip() for p in paths.split(",") if p.strip()]:
+                if shell.file_exists(path):
+                    size = shell.send_shell_command(f"ls -lh {path} 2>&1", timeout=10)
+                    results.append(f"- {path}: ✅ Exists")
+                    results.append(f"  {size.output.strip()}")
+                else:
+                    results.append(f"- {path}: ❌ Not found")
+
+        status_path = "/home/agent/download_status.json"
+        results.append("\n## Previous Downloads")
+        if shell.file_exists(status_path):
+            try:
+                status = json.loads(shell.read_file(status_path))
+            except Exception as exc:  # noqa: BLE001
+                results.append(f"- Failed to parse {status_path}: {exc}")
+            else:
+                for item in status.get("downloads", [])[-5:]:
+                    results.append(f"- {item.get('name', 'Unknown')}: {item.get('path', 'N/A')}")
+        else:
+            results.append("- No download record found")
+
+        disk = shell.send_shell_command("df -h /home | tail -1", timeout=10)
+        results.append(f"\n## Disk Space\n{disk.output.strip()}")
+        return "\n".join(results)
+
+    def get_tool_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": "check_download_status",
+                "description": "Check common download directories, specific paths, previous downloads, and disk space.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "paths": {
+                            "type": "string",
+                            "description": "Comma-separated list of specific paths to check.",
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+
+class RecordDownloadTool(Tool):
+    def name(self) -> str:
+        return "record_download"
+
+    def execute(
+        self,
+        shell,
+        name: str,
+        path: str,
+        commands: str,
+        source: str = "",
+        size: str = "",
+        **kwargs: Any,  # noqa: ARG002
+    ) -> str:
+        shell.send_shell_command("mkdir -p /home/agent /home/submission/scripts", timeout=10)
+
+        status_path = "/home/agent/download_status.json"
+        if shell.file_exists(status_path):
+            try:
+                status = json.loads(shell.read_file(status_path))
+            except Exception:  # noqa: BLE001
+                status = {"downloads": []}
+        else:
+            status = {"downloads": []}
+        status["downloads"].append({"name": name, "path": path, "source": source, "size": size})
+        shell.write_file(status_path, json.dumps(status, indent=2))
+
+        script_path = "/home/submission/scripts/download_resources.sh"
+        if shell.file_exists(script_path):
+            existing_content = shell.read_file(script_path)
+        else:
+            existing_content = """#!/bin/bash
+# Resource Download Script
+# This script is sourced by reproduce.sh
+
+set -e
+
+echo "Downloading resources..."
+
+"""
+        indented = "\n".join(f"    {line}" for line in commands.strip().splitlines())
+        existing_content += f"""
+# Download: {name}
+# Source: {source}, Size: {size}
+if [ ! -e "{path}" ]; then
+    echo "Downloading {name}..."
+{indented}
+else
+    echo "{name} already exists, skipping..."
+fi
+"""
+        shell.write_file(script_path, existing_content)
+        shell.send_shell_command(f"chmod +x {script_path}", timeout=10)
+
+        gitignore_path = "/home/submission/.gitignore"
+        if shell.file_exists(gitignore_path):
+            gitignore_content = shell.read_file(gitignore_path)
+        else:
+            gitignore_content = "# Auto-generated .gitignore\n# Large files should not be committed\n\n"
+        rel_path = path.replace("/home/submission/", "")
+        if rel_path and rel_path not in gitignore_content:
+            gitignore_content += f"\n# {name}\n{rel_path}\n"
+            shell.write_file(gitignore_path, gitignore_content)
+
+        return (
+            "Download recorded:\n"
+            f"- Name: {name}\n"
+            f"- Path: {path}\n"
+            f"- Source: {source}\n"
+            f"- Added to {script_path}\n"
+            "- Added to .gitignore\n\n"
+            "ACTION REQUIRED: reproduce.sh must include `source scripts/download_resources.sh` to download data/models in the grading container."
+        )
+
+    def get_tool_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": "record_download",
+                "description": "Record resource download commands to scripts/download_resources.sh and update download_status.json.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Name of the resource."},
+                        "path": {"type": "string", "description": "Path where the resource was downloaded."},
+                        "commands": {"type": "string", "description": "Shell commands to reproduce the download."},
+                        "source": {"type": "string", "description": "Download source, e.g. huggingface or direct."},
+                        "size": {"type": "string", "description": "Approximate size, e.g. 420MB."},
+                    },
+                    "required": ["name", "path", "commands"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+
 def build_main_direct_tools(capabilities: dict[str, Any] | None = None) -> list[Tool]:
     tools: list[Tool] = [
         ReadFileChunkTool(),
@@ -483,7 +846,10 @@ def build_plan_tools(capabilities: dict[str, Any] | None = None) -> list[Tool]:
 def build_general_tools(capabilities: dict[str, Any] | None = None) -> list[Tool]:
     from aisci_agent_runtime.tools.base import SubagentCompleteTool
 
-    return [*build_main_direct_tools(capabilities), SubagentCompleteTool()]
+    return [
+        *build_main_direct_tools(capabilities),
+        SubagentCompleteTool(),
+    ]
 
 
 def build_implementation_tools(capabilities: dict[str, Any] | None = None) -> list[Tool]:
@@ -531,7 +897,8 @@ def build_env_setup_tools() -> list[Tool]:
     return [
         ReadFileChunkTool(),
         BashToolWithTimeout(default_timeout=ENV_SETUP_BASH_DEFAULT_TIMEOUT, max_timeout=ENV_SETUP_BASH_MAX_TIMEOUT),
-        MappedFileEditTool(),
+        CheckEnvStatusTool(),
+        RecordEnvSetupTool(),
         SubagentCompleteTool(),
     ]
 
@@ -542,10 +909,8 @@ def build_resource_download_tools(capabilities: dict[str, Any] | None = None) ->
     tools: list[Tool] = [
         ReadFileChunkTool(),
         BashToolWithTimeout(default_timeout=RESOURCE_DOWNLOAD_BASH_DEFAULT_TIMEOUT, max_timeout=RESOURCE_DOWNLOAD_BASH_MAX_TIMEOUT),
-        PythonTool(default_timeout=900, max_timeout=7200),
-        MappedFileEditTool(),
+        CheckDownloadStatusTool(),
+        RecordDownloadTool(),
     ]
-    if _capability_enabled(capabilities, "online_research"):
-        tools.extend([WebSearchTool(), LinkSummaryTool()])
     tools.append(SubagentCompleteTool())
     return tools

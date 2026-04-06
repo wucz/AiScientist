@@ -41,6 +41,10 @@ class PaperDomainAdapter:
     def run(self, job: JobRecord) -> dict[str, object]:
         assert isinstance(job.mode_spec, PaperSpec)
         job_paths = ensure_job_dirs(resolve_job_paths(job.id))
+        if job.mode_spec.uses_legacy_inputs:
+            message = job.mode_spec.legacy_operation_error("be executed in this version")
+            append_log(job_paths.logs_dir / "job.log", message)
+            raise RuntimeError(message)
         append_log(job_paths.logs_dir / "job.log", "paper job started")
         self.runtime.ensure_layout(job_paths, WorkspaceLayout.PAPER)
         self._stage_inputs(job.mode_spec, job_paths)
@@ -108,18 +112,10 @@ class PaperDomainAdapter:
         paper_dir = job_paths.workspace_dir / "paper"
         paper_dir.mkdir(parents=True, exist_ok=True)
 
-        if spec.paper_bundle_zip:
-            archive = Path(spec.paper_bundle_zip).resolve()
-            shutil.copy2(archive, job_paths.input_dir / "paper_bundle.zip")
+        if spec.paper_zip_path:
+            archive = Path(spec.paper_zip_path).resolve()
+            shutil.copy2(archive, job_paths.input_dir / "paper.zip")
             self._extract_zip(archive, paper_dir)
-        if spec.context_bundle_zip:
-            archive = Path(spec.context_bundle_zip).resolve()
-            shutil.copy2(archive, job_paths.input_dir / "context_bundle.zip")
-            self._extract_zip(archive, paper_dir)
-        if spec.pdf_path:
-            src = Path(spec.pdf_path).resolve()
-            shutil.copy2(src, paper_dir / "paper.pdf")
-            shutil.copy2(src, job_paths.input_dir / "paper.pdf")
         if spec.paper_md_path:
             src = Path(spec.paper_md_path).resolve()
             shutil.copy2(src, paper_dir / "paper.md")
@@ -197,7 +193,7 @@ class PaperDomainAdapter:
         env = {
             "AISCI_JOB_ID": job.id,
             "AISCI_OBJECTIVE": job.objective,
-            "LOGS_DIR": "/home/logs",
+            "LOGS_DIR": "/workspace/logs",
         }
         env.update(self._optional_sandbox_env())
         return env

@@ -6,6 +6,8 @@ from time import perf_counter
 
 from aisci_agent_runtime.llm_client import create_llm_client
 from aisci_agent_runtime.subagents.base import SubagentOutput, SubagentStatus
+from aisci_agent_runtime.tools.base import SubagentCompleteTool
+from aisci_agent_runtime.tools.shell_tools import ReadFileChunkTool, SearchFileTool
 from aisci_domain_paper.configs import (
     DEFAULT_PAPER_READER_CONFIG,
     DEFAULT_PAPER_STRUCTURE_CONFIG,
@@ -80,7 +82,11 @@ class SynthesisSubagent(PaperSubagent):
         return SYNTHESIS_SYSTEM_PROMPT
 
     def get_tools(self):
-        return build_reader_tools(self.capabilities)
+        return [
+            ReadFileChunkTool(),
+            SearchFileTool(),
+            SubagentCompleteTool(),
+        ]
 
 
 @dataclass(frozen=True)

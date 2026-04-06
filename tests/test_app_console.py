@@ -14,6 +14,7 @@ from aisci_app.presentation import mle_job_summary, paper_doctor_report, paper_j
 from aisci_core.models import JobRecord, JobSpec, JobStatus, JobType, MLESpec, PaperSpec, RunPhase, RuntimeProfile, WorkspaceLayout
 from aisci_app.tui import (
     TUIRunResult,
+    _collect_subagent_counts,
     _conversation_view_text,
     _select_recent_feed_records,
     _format_recent_event_text,
@@ -42,7 +43,7 @@ def _paper_job_record(*, status: JobStatus, phase: RunPhase, error: str | None =
             workspace_layout=WorkspaceLayout.PAPER,
             run_final_validation=True,
         ),
-        mode_spec=PaperSpec(pdf_path="/tmp/paper.pdf"),
+        mode_spec=PaperSpec(paper_md_path="/tmp/paper.md"),
         created_at=now,
         updated_at=now,
         started_at=now,
@@ -86,7 +87,7 @@ def _create_paper_job(tmp_path: Path):
                 workspace_layout=WorkspaceLayout.PAPER,
                 run_final_validation=True,
             ),
-            mode_spec=PaperSpec(pdf_path=str(tmp_path / "paper.pdf")),
+            mode_spec=PaperSpec(paper_md_path=str(tmp_path / "paper.md")),
         )
     )
     paths = ensure_job_dirs(resolve_job_paths(job.id))
@@ -198,6 +199,32 @@ def _create_mle_job(tmp_path: Path):
     return job, paths
 
 
+def _insert_legacy_paper_job(store: JobStore, *, job_id: str = "legacy-paper-job") -> None:
+    now = datetime.now().astimezone().isoformat()
+    with store.connect() as conn:
+        conn.execute(
+            """
+            insert into jobs (
+                id, job_type, status, phase, objective, llm_profile,
+                runtime_profile_json, mode_spec_json, created_at, updated_at
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                JobType.PAPER.value,
+                JobStatus.SUCCEEDED.value,
+                RunPhase.FINALIZE.value,
+                "legacy paper console",
+                "paper-default",
+                RuntimeProfile(workspace_layout=WorkspaceLayout.PAPER).model_dump_json(),
+                json.dumps({"pdf_path": "/tmp/paper.pdf"}),
+                now,
+                now,
+            ),
+        )
+
+
 def test_paper_job_summary_exposes_product_signals(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("AISCI_REPO_ROOT", str(tmp_path))
     job, _ = _create_paper_job(tmp_path)
@@ -274,7 +301,7 @@ def test_workspace_tree_text_renders_home_style_tree(tmp_path: Path) -> None:
 
 def test_workspace_tree_text_tolerates_permission_denied(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / "workspace"
-    restricted = workspace / "logs"
+    restricted = workspace / "agent"
     restricted.mkdir(parents=True)
 
     original_iterdir = Path.iterdir
@@ -289,13 +316,70 @@ def test_workspace_tree_text_tolerates_permission_denied(tmp_path: Path, monkeyp
     rendered = _workspace_tree_text(workspace, depth=2)
 
     assert "/home" in rendered
-    assert "logs/" in rendered
+    assert "agent/" in rendered
     assert "[permission denied]" in rendered
 
 
+def test_workspace_tree_text_hides_root_logs_mountpoint(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / "logs").mkdir(parents=True)
+    (workspace / "agent").mkdir(parents=True)
+
+    rendered = _workspace_tree_text(workspace, depth=2)
+
+    assert "/home" in rendered
+    assert "agent/" in rendered
+    assert "logs/" not in rendered
+
+
 def test_truncate_block_lines_adds_ellipsis_when_over_limit() -> None:
-    text = "a\nb\nc\nd"
-    assert _truncate_block_lines(text, max_lines=3) == "a\nb\n..."
+    text = "root\nbranch_a\nbranch_b\nbranch_c\nleaf_1\nleaf_2\nleaf_3\nleaf_4"
+    assert _truncate_block_lines(text, max_lines=5) == "root\n...\nleaf_2\nleaf_3\nleaf_4"
+
+
+def test_collect_subagent_counts_updates_incrementally_and_keeps_first_seen_order(tmp_path: Path) -> None:
+    path = tmp_path / "conversation.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps({"event_type": "subagent_start", "message": "implementation subagent started."}),
+                json.dumps({"event_type": "subagent_start", "message": "paper_structure subagent started."}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cache: dict[str, dict[str, object]] = {}
+
+    first = _collect_subagent_counts(path, cache_store=cache)
+
+    assert first == [("implementation", 1), ("paper_structure", 1)]
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"event_type": "subagent_start", "message": "paper_structure subagent started."}) + "\n")
+        handle.write(json.dumps({"event_type": "subagent_start", "message": "env_setup subagent started."}) + "\n")
+
+    second = _collect_subagent_counts(path, cache_store=cache)
+
+    assert second == [("implementation", 1), ("paper_structure", 2), ("env_setup", 1)]
+
+
+def test_collect_subagent_counts_resets_cache_after_log_truncation(tmp_path: Path) -> None:
+    path = tmp_path / "conversation.jsonl"
+    path.write_text(
+        json.dumps({"event_type": "subagent_start", "message": "implementation subagent started."}) + "\n",
+        encoding="utf-8",
+    )
+    cache: dict[str, dict[str, object]] = {}
+
+    assert _collect_subagent_counts(path, cache_store=cache) == [("implementation", 1)]
+
+    path.write_text(
+        json.dumps({"event_type": "subagent_start", "message": "env_setup subagent started."}) + "\n",
+        encoding="utf-8",
+    )
+
+    assert _collect_subagent_counts(path, cache_store=cache) == [("env_setup", 1)]
 
 
 def test_log_panel_layout_prioritizes_agent_log_height() -> None:
@@ -464,7 +548,7 @@ def test_paper_run_wait_reports_final_failure(monkeypatch, tmp_path: Path) -> No
     monkeypatch.setattr("aisci_app.cli.JobService", _Service)
     monkeypatch.setattr("aisci_app.cli.build_paper_job_spec", lambda **kwargs: object())
 
-    result = runner.invoke(app, ["paper", "run", "--pdf", str(tmp_path / "paper.pdf"), "--wait"])
+    result = runner.invoke(app, ["paper", "run", "--paper-md", str(tmp_path / "paper.md"), "--wait"])
 
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
@@ -497,7 +581,7 @@ def test_paper_run_accepts_gpu_ids(monkeypatch, tmp_path: Path) -> None:
 
     result = runner.invoke(
         app,
-        ["paper", "run", "--pdf", str(tmp_path / "paper.pdf"), "--gpu-ids", "4,5"],
+        ["paper", "run", "--paper-md", str(tmp_path / "paper.md"), "--gpu-ids", "4,5"],
     )
 
     assert result.exit_code == 0
@@ -505,12 +589,39 @@ def test_paper_run_accepts_gpu_ids(monkeypatch, tmp_path: Path) -> None:
     assert captured["gpu_ids"] == ["4", "5"]
 
 
+def test_paper_run_accepts_zip(monkeypatch, tmp_path: Path) -> None:
+    runner = CliRunner()
+    captured: dict[str, object] = {}
+
+    class _Service:
+        def __init__(self) -> None:
+            self.store = None
+
+        def create_job(self, spec) -> JobRecord:  # noqa: ANN001
+            return _paper_job_record(status=JobStatus.PENDING, phase=RunPhase.INGEST)
+
+        def spawn_worker(self, job_id: str, wait: bool = False) -> int:  # noqa: ARG002
+            return 0
+
+    def fake_build_paper_job_spec(**kwargs):  # noqa: ANN001
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr("aisci_app.cli.JobService", _Service)
+    monkeypatch.setattr("aisci_app.cli.build_paper_job_spec", fake_build_paper_job_spec)
+
+    result = runner.invoke(app, ["paper", "run", "--zip", str(tmp_path / "paper_bundle.zip")])
+
+    assert result.exit_code == 0
+    assert captured["paper_zip_path"] == str(tmp_path / "paper_bundle.zip")
+
+
 def test_paper_run_rejects_gpu_count_and_ids_together(tmp_path: Path) -> None:
     runner = CliRunner()
 
     result = runner.invoke(
         app,
-        ["paper", "run", "--pdf", str(tmp_path / "paper.pdf"), "--gpus", "2", "--gpu-ids", "4,5"],
+        ["paper", "run", "--paper-md", str(tmp_path / "paper.md"), "--gpus", "2", "--gpu-ids", "4,5"],
     )
 
     assert result.exit_code != 0
@@ -522,7 +633,7 @@ def test_paper_run_tui_requires_wait(tmp_path: Path) -> None:
 
     result = runner.invoke(
         app,
-        ["paper", "run", "--pdf", str(tmp_path / "paper.pdf"), "--detach", "--tui"],
+        ["paper", "run", "--paper-md", str(tmp_path / "paper.md"), "--detach", "--tui"],
     )
 
     assert result.exit_code != 0
@@ -556,7 +667,7 @@ def test_paper_run_tui_detach_emits_started_payload(monkeypatch, tmp_path: Path)
 
     result = runner.invoke(
         app,
-        ["paper", "run", "--pdf", str(tmp_path / "paper.pdf"), "--wait", "--tui"],
+        ["paper", "run", "--paper-md", str(tmp_path / "paper.md"), "--wait", "--tui"],
     )
 
     assert result.exit_code == 0
@@ -565,6 +676,20 @@ def test_paper_run_tui_detach_emits_started_payload(monkeypatch, tmp_path: Path)
     assert payload["job_id"] == created_job.id
     assert payload["status"] == "started"
     assert payload["worker"] == 4242
+
+
+def test_paper_resume_rejects_legacy_job_cleanly(tmp_path: Path, monkeypatch) -> None:
+    runner = CliRunner()
+    monkeypatch.setenv("AISCI_REPO_ROOT", str(tmp_path))
+    monkeypatch.setenv("AISCI_OUTPUT_ROOT", str(tmp_path / "runtime"))
+    store = JobStore()
+    _insert_legacy_paper_job(store, job_id="legacy-paper-job")
+
+    result = runner.invoke(app, ["paper", "resume", "legacy-paper-job"])
+
+    assert result.exit_code == 1
+    assert "deprecated inputs (pdf_path)" in (result.stdout + result.stderr)
+    assert "recreate it with --paper-md and/or --zip" in (result.stdout + result.stderr)
 
 
 def test_mle_run_tui_requires_wait() -> None:
