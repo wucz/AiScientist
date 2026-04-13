@@ -1,10 +1,9 @@
-<h1 align="center"><img src="assets/logo.png" alt="" width="64" style="vertical-align: middle;">&nbsp; AiScientist: Autonomous Long-Horizon Engineering for ML Research</h1>
+<h1 align="center"><img src="assets/logo.png" alt="" width="64" style="vertical-align: middle;">&nbsp; AiScientist: A File-as-Bus Research Lab</h1>
 
 <p align="center">
   <strong>Long-horizon ML research needs File-as-Bus coordination, not just message handoffs.</strong><br />
-  File-as-Bus turns workspace files into the system of record.<br />
   <em><strong>Talk is cheap</strong>, show me <strong>your files</strong>.</em><br />
-  Agent-as-Tool Orchestration | File-as-Bus Coordination | Thin Control over Thick State
+  Hierarchical Orchestration | File-as-Bus Coordination | Thin Control over Thick State
 </p>
 
 <p align="center">
@@ -92,6 +91,12 @@ File-as-Bus is the core coordination protocol. Instead of compressing progress i
 </td>
 </tr>
 </table>
+
+<p align="center"><em>From paper markdown to long-horizon execution.</em></p>
+
+https://github.com/user-attachments/assets/4356691b-eeb5-4766-a50b-29ddbc48ef9b
+
+<p align="center"><em>Hierarchical orchestration, File-as-Bus coordination, and durable workspace state in one run.</em></p>
 
 ## ⚙️ How It Works
 
