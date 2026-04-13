@@ -1,21 +1,22 @@
-<h1 align="center"><img src="assets/logo.png" alt="" width="64" style="vertical-align: middle;">&nbsp; AiScientist: A File-as-Bus Research Lab</h1>
+<h1 align="center"><img src="assets/logo.png" alt="" width="64" style="vertical-align: middle;">&nbsp; AiScientist: Autonomous Long-Horizon Engineering for ML Research</h1>
 
 <p align="center">
   <strong>Long-horizon ML research needs File-as-Bus coordination, not just message handoffs.</strong><br />
   File-as-Bus turns workspace files into the system of record.<br />
+  <em><strong>Talk is cheap</strong>, show me <strong>your files</strong>.</em><br />
   Agent-as-Tool Orchestration | File-as-Bus Coordination | Thin Control over Thick State
 </p>
 
 <p align="center">
   <a href="#quick-start"><img src="https://img.shields.io/badge/Quick_Start-Local_Setup-0F766E?style=for-the-badge" alt="Quick Start" /></a>
   <a href="#why-it-feels-different"><img src="https://img.shields.io/badge/Why-File--as--Bus-111827?style=for-the-badge" alt="Why File-as-Bus" /></a>
-  <a href="#paper-track"><img src="https://img.shields.io/badge/Paper-Reproduce_Papers-D86A42?style=for-the-badge" alt="Paper Track" /></a>
-  <a href="#mle-track"><img src="https://img.shields.io/badge/MLE-Kaggle--Style_Competitions-F59E0B?style=for-the-badge" alt="MLE Track" /></a>
+  <a href="#paper-track"><img src="https://img.shields.io/badge/Paper_Bench-Top--tier_Conference_Paper-D86A42?style=for-the-badge" alt="Paper Track" /></a>
+  <a href="#mle-track"><img src="https://img.shields.io/badge/MLE_Bench-Top--tier_Competition--style_ML_tasks-F59E0B?style=for-the-badge" alt="MLE Track" /></a>
   <a href="#what-lands-on-disk"><img src="https://img.shields.io/badge/Inspectability-Workspace_State-10233F?style=for-the-badge" alt="Workspace State" /></a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/orchestration-Agent--as--Tool-0F766E" alt="Agent-as-Tool orchestration" />
+  <img src="https://img.shields.io/badge/hierarchical_orchestration-Agent--as--Tool-0F766E" alt="Agent-as-Tool orchestration" />
   <img src="https://img.shields.io/badge/coordination-File--as--Bus-10233F" alt="File-as-Bus coordination" />
   <img src="https://img.shields.io/badge/control-Thin_over_Thick_State-D86A42" alt="Thin control over thick state" />
   <img src="https://img.shields.io/badge/state-System_of_Record-F59E0B" alt="System of record" />
@@ -35,19 +36,19 @@
 
 ## 📰 News
 
-- `2026-04-09`: Initial public release of AiScientist.
-- `2026-04-09`: The public README now reflects the `File-as-Bus` thesis, hierarchical research team design, and long-horizon paper/MLE workflows.
+- `2026-04-15`: Initial public release of AiScientist.
+- `2026-04-15`: The public README now reflects the `File-as-Bus` thesis, hierarchical research team design, and long-horizon paper/MLE workflows.
 - Future updates will include benchmarks, release notes, and project milestones.
 
 ## 🔬 What AiScientist Is
 
-AiScientist is an artifact-mediated virtual research lab for long-horizon ML research engineering. It keeps orchestration lightweight while preserving the evolving state of the project in a shared workspace that every downstream agent can re-ground on.
+AiScientist is an artifact-mediated virtual research lab for long-horizon ML research engineering. It treats long-horizon performance as a joint systems problem: agents must not only orchestrate the right expertise at the right stage, but also preserve evolving project state with enough fidelity for later decisions to stay coherent.
 
 - `paper`: given a paper markdown or bundle plus a GPU and time budget, AiScientist autonomously drives the full reproduction loop from reading and planning to implementation, experimentation, debugging, and final self-check.
 
 - `mle`: given an ML task plus a GPU and time budget, AiScientist autonomously conducts research for stronger solutions through repeated implementation-and-experiment cycles that improve the target metric over time.
 
-File-as-Bus is the core communication protocol. Instead of compressing progress into lossy conversational handoffs, AiScientist turns workspace files into the system of record for plans, code, experiments, logs, and validation artifacts.
+File-as-Bus is the core coordination protocol. Instead of compressing progress into lossy conversational handoffs, AiScientist turns workspace files into the system of record for plans, code, experiments, logs, and validation artifacts.
 
 ## ✨ Why It Feels Different
 
@@ -73,7 +74,7 @@ File-as-Bus is the core communication protocol. Instead of compressing progress 
 </td>
 <td width="25%" align="center" style="vertical-align: top; padding: 15px;">
 
-<h3>Workspace as the System of Record</h3>
+<h3>Workspace as System of Record</h3>
 
 <img src="assets/workspace.png" width="90%" alt="Workspace as the system of record illustration">
 
@@ -275,7 +276,6 @@ tests/                    host-side regression tests
 ```
 
 AiScientist is opinionated enough to run real work, but still transparent enough that you can inspect every file the lab leaves behind.
-
 ## ❤️ Acknowledgments
 
 AiScientist builds on prior work in research automation, evaluation, and ML task environments, especially:
@@ -285,14 +285,15 @@ AiScientist builds on prior work in research automation, evaluation, and ML task
 
 We are grateful to the authors and maintainers of these projects for making this line of work more concrete, reproducible, and comparable.
 
-## 📬 Contact
-
-For questions, collaboration, or bug reports, please open an issue or email 📧 `gx.chen.chn@gmail.com`.
-
 ## 📄 License
 
 Released under the MIT License. See [LICENSE](LICENSE).
 
-If AiScientist is useful in your research or engineering workflow, consider starring 🌟 the repo and citing the project.
+
+## 📬 Contact
+
+For questions, collaboration, or bug reports, please open an issue or email 📧 `gx.chen.chn@gmail.com`.
+
+<h4 align="center"><em>If AiScientist is useful in your research or engineering workflow, consider starring 🌟 the repo and citing the project.</em></h4>
 
 <p align="center"><strong><a href="#quick-start">Quick Start</a> · <a href="#two-tracks">Two Tracks</a> · <a href="docs/operator-guide.md">Operator Guide</a></strong></p>
