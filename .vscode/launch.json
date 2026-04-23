@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "MLE Worker (direct debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "aisci_app.worker_main",
+      "args": ["${input:jobId}"],
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": false,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "MLE Run CLI (creates job only)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "aisci_app.cli",
+      "args": [
+        "--env-file", ".env",
+        "mle", "run",
+        "--zip", "/Users/admin/Downloads/detecting-insults-in-social-commentary.zip",
+        "--name", "detecting-insults-in-social-commentary",
+        "--llm-profile", "glm-5",
+        "--time-limit", "2h",
+        "--local"
+      ],
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": false,
+      "console": "integratedTerminal"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "jobId",
+      "type": "promptString",
+      "description": "Job ID to debug (e.g. 20260419-171515-05d5dd77)",
+      "default": "20260419-171515-05d5dd77"
+    }
+  ]
+}

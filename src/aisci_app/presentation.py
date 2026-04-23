@@ -344,6 +344,7 @@ def build_paper_job_spec(
     gpu_ids: list[str] | None = None,
     enable_online_research: bool = True,
     objective: str = "paper reproduction job",
+    local: bool = False,
 ) -> JobSpec:
     runtime = RuntimeProfile(
         gpu_count=0 if gpu_ids else gpus,
@@ -353,6 +354,7 @@ def build_paper_job_spec(
         pull_policy=pull_policy,
         run_final_validation=run_final_validation,
         workspace_layout=WorkspaceLayout.PAPER,
+        local=local,
     )
     return JobSpec(
         job_type=JobType.PAPER,
@@ -394,6 +396,7 @@ def build_mle_job_spec(
     run_final_validation: bool,
     gpu_ids: list[str] | None = None,
     objective: str = "mle optimization job",
+    local: bool = False,
 ) -> JobSpec:
     runtime = RuntimeProfile(
         gpu_count=0 if gpu_ids else gpus,
@@ -404,6 +407,7 @@ def build_mle_job_spec(
         run_final_validation=run_final_validation,
         network_policy=NetworkPolicy.BRIDGE,
         workspace_layout=WorkspaceLayout.MLE,
+        local=local,
     )
     return JobSpec(
         job_type=JobType.MLE,

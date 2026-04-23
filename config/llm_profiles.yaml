@@ -3,7 +3,7 @@ version: 1
 defaults:
   default: glm-5
   paper: glm-5
-  mle: gpt-5.4
+  mle: glm-5
 
 backends:
   openai:
@@ -44,7 +44,7 @@ profiles:
       use_phase: true
 
   glm-5:
-    backend: azure-openai
+    backend: openai
     model: glm-5
     api: completions
     limits:

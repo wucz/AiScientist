@@ -250,6 +250,7 @@ def run_paper(
     seed_repo_zip: Annotated[str | None, typer.Option("--submission-seed-repo-zip")] = None,
     supporting_materials: Annotated[list[str] | None, typer.Option("--supporting-materials")] = None,
     run_final_validation: Annotated[bool, typer.Option("--run-final-validation/--skip-final-validation")] = True,
+    local: Annotated[bool, typer.Option("--local/--no-local", help="Run without Docker (local execution mode).")] = False,
     detach: Annotated[bool, typer.Option("--detach/--wait")] = True,
     tui: Annotated[
         bool,
@@ -283,6 +284,7 @@ def run_paper(
         image=image,
         pull_policy=pull_policy,
         run_final_validation=run_final_validation,
+        local=local,
     )
     job = service.create_job(spec)
     wait = not detach
@@ -417,6 +419,7 @@ def run_mle(
         bool,
         typer.Option("--run-final-validation/--skip-final-validation"),
     ] = False,
+    local: Annotated[bool, typer.Option("--local/--no-local", help="Run without Docker (local execution mode).")] = False,
     detach: Annotated[bool, typer.Option("--detach/--wait")] = True,
     tui: Annotated[
         bool,
@@ -458,6 +461,7 @@ def run_mle(
         image=image,
         pull_policy=pull_policy,
         run_final_validation=run_final_validation,
+        local=local,
     )
     _ensure_mle_launch_ready(spec)
     job = service.create_job(spec)

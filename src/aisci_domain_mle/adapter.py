@@ -18,6 +18,7 @@ install_optional_dependency_stubs()
 
 from aisci_agent_runtime.llm_client import LLMConfig, create_llm_client
 from aisci_agent_runtime.llm_profiles import backend_env_values, missing_backend_env_vars, resolve_llm_profile
+from aisci_agent_runtime.local_shell import LocalShellInterface
 from aisci_core.logging_utils import append_log
 from aisci_domain_mle.candidate_registry import CandidateRegistry
 from aisci_domain_mle.constants import is_file_as_bus_enabled
@@ -118,9 +119,11 @@ class MLEDomainAdapter:
         from aisci_runtime_docker.runtime import DockerRuntimeError
 
         if not self.runtime.can_use_docker():
-            message = "MLE mode requires a reachable Docker daemon. No local fallback loop is available."
-            append_log(job_paths.logs_dir / "job.log", message)
-            raise DockerRuntimeError(message)
+            if not job.runtime_profile.local:
+                message = "MLE mode requires a reachable Docker daemon. No local fallback loop is available."
+                append_log(job_paths.logs_dir / "job.log", message)
+                raise DockerRuntimeError(message)
+            # local mode: skip Docker availability check
         profile = self._resolve_llm_profile(job)
         if runtime_uses_stub_llm():
             append_log(
@@ -569,9 +572,11 @@ class MLEDomainAdapter:
     def _assert_public_data_safe(self, root: Path) -> None:
         root = root.resolve()
         for path in root.rglob("*"):
-            lowered_parts = {part.lower() for part in path.parts}
+            # Use relative path parts only to avoid false positives from OS-level
+            # path components (e.g. macOS resolves /tmp → /private/tmp).
+            relative_parts = {part.lower() for part in path.relative_to(root).parts}
             lowered_name = path.name.lower()
-            if any(part.startswith("private") for part in lowered_parts):
+            if any(part.startswith("private") for part in relative_parts):
                 raise ValueError("public competition staging contains private paths.")
             if lowered_name in SENSITIVE_WORKSPACE_FILENAMES:
                 raise ValueError("public competition staging contains validation or grading artifacts.")
@@ -618,7 +623,54 @@ class MLEDomainAdapter:
             shutil.copy2(Path(source).resolve(), destination)
 
     def _run_real_loop(self, job: JobRecord, job_paths, llm_profile) -> None:
+        breakpoint()  # DEBUG: job 启动入口 — 查看 job / job_paths / llm_profile
         from aisci_core.models import WorkspaceLayout
+
+        if job.runtime_profile.local:
+            import dataclasses
+            append_log(job_paths.logs_dir / "job.log", "local mode: skipping Docker container setup")
+            shell = LocalShellInterface(job_paths, working_dir=str(job_paths.workspace_dir / "code"))
+            ws = job_paths.workspace_dir
+            local_config = dataclasses.replace(
+                self._orchestrator_runtime(job, llm_profile),
+                paths=OrchestratorPaths(
+                    home_root=str(ws),
+                    data_dir=str(ws / "data"),
+                    code_dir=str(ws / "code"),
+                    submission_dir=str(ws / "submission"),
+                    agent_dir=str(ws / "agent"),
+                    logs_dir=str(job_paths.logs_dir),
+                ),
+            )
+            try:
+                engine = EmbeddedMLEEngine(
+                    config=local_config,
+                    shell=shell,
+                    llm=self._build_llm_client(llm_profile),
+                )
+                append_log(job_paths.logs_dir / "job.log", "starting host-side mle engine (local mode)")
+                summary = engine.run()
+                append_log(job_paths.logs_dir / "job.log", summary)
+            finally:
+                rescued_submission = restore_submission_from_workspace(job_paths.workspace_dir)
+                if rescued_submission is not None:
+                    append_log(
+                        job_paths.logs_dir / "job.log",
+                        f"submission.csv is present at {rescued_submission}",
+                    )
+                else:
+                    append_log(
+                        job_paths.logs_dir / "job.log",
+                        "WARNING: submission.csv not found under workspace/submission or known code fallback paths",
+                    )
+                try:
+                    self._materialize_registry(job_paths, job)
+                except Exception as exc:  # noqa: BLE001
+                    append_log(
+                        job_paths.logs_dir / "job.log",
+                        f"WARNING: failed to materialize submission registry artifacts: {exc}",
+                    )
+            return
 
         profile = default_domain_mle_profile()
         image_tag = self.runtime.prepare_image(profile, job.runtime_profile)
@@ -1027,6 +1079,13 @@ class MLEDomainAdapter:
             with self._resolve_legacy_validation_target(job.mode_spec) as target:
                 if target is not None:
                     return self._run_legacy_grade_validation(submission_path, target)
+        if job.runtime_profile.local:
+            return ValidationReport(
+                status="skipped",
+                summary="Final validation skipped in local mode (no Docker available).",
+                runtime_profile_hash="local-mode",
+                container_image="not-built",
+            )
         if not self.runtime.can_use_docker():
             return ValidationReport(
                 status="failed",

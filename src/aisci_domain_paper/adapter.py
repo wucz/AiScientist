@@ -14,6 +14,7 @@ from aisci_agent_runtime.llm_profiles import (
     missing_backend_env_vars,
     resolve_llm_profile,
 )
+from aisci_agent_runtime.local_shell import LocalShellInterface
 from aisci_agent_runtime.trace import AgentTraceWriter
 from aisci_core.logging_utils import append_log
 from aisci_core.models import ArtifactRecord, JobRecord, PaperSpec, RunPhase, ValidationReport, WorkspaceLayout
@@ -56,6 +57,13 @@ class PaperDomainAdapter:
         profile = resolve_llm_profile(job.llm_profile, default_for="paper")
         self._ensure_runtime_ready(job, job_paths, profile)
 
+        if job.runtime_profile.local:
+            append_log(job_paths.logs_dir / "job.log", "local mode: skipping Docker container setup")
+            self._run_real_loop(job, job_paths, None, profile)
+            artifacts = self._collect_artifacts(job_paths)
+            validation = self._maybe_validate(job, job_paths, image_tag=None)
+            return {"artifacts": artifacts, "validation_report": validation}
+
         docker_profile = default_paper_profile(job.runtime_profile.image_profile)
         image_tag = self.runtime.prepare_image(docker_profile, job.runtime_profile)
         spec = self.runtime.create_session_spec(
@@ -92,9 +100,11 @@ class PaperDomainAdapter:
 
     def _ensure_runtime_ready(self, job: JobRecord, job_paths, profile) -> None:
         if not self.runtime.can_use_docker():
-            message = "Paper mode requires a reachable Docker daemon. No local fallback loop is available."
-            append_log(job_paths.logs_dir / "job.log", message)
-            raise DockerRuntimeError(message)
+            if not job.runtime_profile.local:
+                message = "Paper mode requires a reachable Docker daemon. No local fallback loop is available."
+                append_log(job_paths.logs_dir / "job.log", message)
+                raise DockerRuntimeError(message)
+            # local mode: skip Docker availability check
         missing = missing_backend_env_vars(profile)
         if missing:
             message = (
@@ -139,7 +149,10 @@ class PaperDomainAdapter:
             shutil.copy2(Path(source).resolve(), destination)
 
     def _run_real_loop(self, job: JobRecord, job_paths, session, profile) -> None:
-        shell = DockerShellInterface(self.runtime, session, working_dir="/home/submission")
+        if session is None:
+            shell = LocalShellInterface(job_paths, working_dir="/home/submission")
+        else:
+            shell = DockerShellInterface(self.runtime, session, working_dir="/home/submission")
         llm = self._build_llm_client(profile, enable_online_research=job.mode_spec.enable_online_research)
         self._write_resolved_llm_config(job_paths, profile, job.mode_spec.enable_online_research)
         trace = AgentTraceWriter(job_paths.logs_dir)
@@ -328,6 +341,13 @@ class PaperDomainAdapter:
                 status="skipped",
                 summary="Final validation disabled for this job.",
                 runtime_profile_hash="disabled",
+                container_image="not-built",
+            )
+        if job.runtime_profile.local:
+            return ValidationReport(
+                status="skipped",
+                summary="Final validation skipped in local mode (no Docker available).",
+                runtime_profile_hash="local-mode",
                 container_image="not-built",
             )
         if not self.runtime.can_use_docker():

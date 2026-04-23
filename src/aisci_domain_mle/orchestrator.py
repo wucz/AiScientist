@@ -906,6 +906,7 @@ class EmbeddedMLEEngine:
         self.llm = llm
 
     def run(self) -> str:
+        breakpoint()  # DEBUG: agent 主循环入口 — 查看 self.config / self.shell / self.llm
         runtime = self.config
         paths = _prepare_runtime_dirs(self.shell, runtime.paths)
 

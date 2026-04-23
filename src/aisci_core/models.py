@@ -81,6 +81,7 @@ class RuntimeProfile(BaseModel):
     checkpoint_interval_seconds: int = Field(default=300, ge=0)
     validation_strategy: ValidationStrategy = ValidationStrategy.FRESH_CONTAINER
     keep_container_on_failure: bool = False
+    local: bool = False
 
     @model_validator(mode="after")
     def normalize_validation(self) -> "RuntimeProfile":

@@ -124,32 +124,35 @@ def evaluate_mle_launch_preflight(
     warnings: list[str] = []
 
     if not runtime.can_use_docker():
-        errors.append(
-            "MLE mode requires a reachable Docker daemon. No local fallback loop is available."
-        )
-        return MLELaunchPreflight(ready=False, errors=tuple(errors), warnings=tuple(warnings))
+        if not job_spec.runtime_profile.local:
+            errors.append(
+                "MLE mode requires a reachable Docker daemon. No local fallback loop is available."
+            )
+            return MLELaunchPreflight(ready=False, errors=tuple(errors), warnings=tuple(warnings))
+        # local mode: skip Docker availability check
 
-    profile = default_domain_mle_profile()
-    image_ref = (job_spec.runtime_profile.image or "").strip() or profile.image
-    pull_policy = job_spec.runtime_profile.pull_policy or profile.pull_policy
-    if pull_policy == PullPolicy.ALWAYS:
-        if proxy_enabled():
-            warnings.append(
-                f"Runtime image {image_ref} will be pulled for this run; proxy environment is already present."
-            )
-        else:
-            errors.append(
-                f"Runtime image {image_ref} will be pulled for this run. Run `proxy-on` first, then retry `aisci mle run`."
-            )
-    elif pull_policy == PullPolicy.IF_MISSING and not runtime.image_exists(image_ref):
-        if proxy_enabled():
-            warnings.append(
-                f"Runtime image {image_ref} is missing locally and will be pulled; proxy environment is already present."
-            )
-        else:
-            errors.append(
-                f"Runtime image {image_ref} is missing locally and this run would pull it. Run `proxy-on` first, then retry `aisci mle run`."
-            )
+    if not job_spec.runtime_profile.local:
+        profile = default_domain_mle_profile()
+        image_ref = (job_spec.runtime_profile.image or "").strip() or profile.image
+        pull_policy = job_spec.runtime_profile.pull_policy or profile.pull_policy
+        if pull_policy == PullPolicy.ALWAYS:
+            if proxy_enabled():
+                warnings.append(
+                    f"Runtime image {image_ref} will be pulled for this run; proxy environment is already present."
+                )
+            else:
+                errors.append(
+                    f"Runtime image {image_ref} will be pulled for this run. Run `proxy-on` first, then retry `aisci mle run`."
+                )
+        elif pull_policy == PullPolicy.IF_MISSING and not runtime.image_exists(image_ref):
+            if proxy_enabled():
+                warnings.append(
+                    f"Runtime image {image_ref} is missing locally and will be pulled; proxy environment is already present."
+                )
+            else:
+                errors.append(
+                    f"Runtime image {image_ref} is missing locally and this run would pull it. Run `proxy-on` first, then retry `aisci mle run`."
+                )
 
     competition_name = getattr(spec, "competition_name", None)
     competition_zip_path = getattr(spec, "competition_zip_path", None)
